@@ -47,12 +47,23 @@ def build_messages(window: MessageWindow, fact_types: Sequence[FactType]) -> lis
     for author_id, record in participants.items():
         discord_name = record.author_display
         official_name = record.official_name
+        alias_parts: list[str] = []
+        for alias in record.aliases:
+            if alias.alias_type:
+                alias_parts.append(f"{alias.name} ({alias.alias_type.replace('_', ' ')})")
+            else:
+                alias_parts.append(alias.name)
+        alias_suffix = (
+            f"; aliases: {', '.join(alias_parts)}" if alias_parts else ""
+        )
         if official_name:
             participant_lines.append(
-                f"- {official_name} (Discord: {discord_name}, author_id={author_id})"
+                f"- {official_name} (Discord: {discord_name}, author_id={author_id}{alias_suffix})"
             )
         else:
-            participant_lines.append(f"- {discord_name} (author_id={author_id})")
+            participant_lines.append(
+                f"- {discord_name} (author_id={author_id}{alias_suffix})"
+            )
     participant_text = "\n".join(participant_lines)
 
     catalog_text = format_fact_catalog(fact_types)
@@ -60,7 +71,7 @@ def build_messages(window: MessageWindow, fact_types: Sequence[FactType]) -> lis
     instructions = f"""
 You will receive a short sequence of Discord messages (chronological). Each line includes author_id and message_id data. Use this context to extract zero or more structured facts from the supported catalogue. When you identify a fact:
 1. Use the EXACT author_id values listed in Participants for subjects/objects when they refer to Discord members.
-2. Resolve names and nicknames in the conversation to the matching participant's official name whenever context makes the identity clear. If unsure, skip the fact.
+2. Resolve any names, nicknames, or aliases mentioned in the conversation to the matching participant listed in Participants when context makes the identity clear. If unsure, skip the fact.
 3. Populate attributes using plain text (ISO dates preferred when possible).
 4. Provide a confidence score between 0.0 and 1.0 (float). Only include facts you are at least 0.3 confident about.
 5. Always include the message_ids that directly support the fact (at least the focus message).

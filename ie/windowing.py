@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -15,6 +16,12 @@ def _parse_timestamp(value: str | None) -> datetime | None:
 
 
 @dataclass(slots=True)
+class AliasEntry:
+    name: str
+    alias_type: str | None
+
+
+@dataclass(slots=True)
 class MessageRecord:
     id: str
     channel_id: str
@@ -22,6 +29,7 @@ class MessageRecord:
     author_id: str
     author_display: str
     official_name: str | None
+    aliases: tuple[AliasEntry, ...]
     content: str
     timestamp: datetime
     message_type: str
@@ -45,6 +53,26 @@ class MessageWindow:
             f"[{record.timestamp.isoformat()}] {record.author_label()}: {record.content.strip()}"
             for record in self.messages
         )
+
+
+def _parse_aliases(raw: str | bytes | None) -> tuple[AliasEntry, ...]:
+    if not raw:
+        return ()
+    if isinstance(raw, bytes):
+        raw = raw.decode()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return ()
+
+    aliases: list[AliasEntry] = []
+    for item in data or []:
+        alias = item.get("alias") if isinstance(item, dict) else None
+        if not alias:
+            continue
+        alias_type = item.get("alias_type") if isinstance(item, dict) else None
+        aliases.append(AliasEntry(name=str(alias), alias_type=str(alias_type) if alias_type is not None else None))
+    return tuple(aliases)
 
 
 class WindowBuilder:
@@ -96,12 +124,20 @@ class WindowBuilder:
               m.author_id,
               COALESCE(member.nickname, member.name) AS display_name,
               member.official_name,
+              alias_lookup.aliases_json,
               m.content,
               m.timestamp,
               m.type,
               ref.ref_message_id
             FROM message AS m
             LEFT JOIN member ON member.id = m.author_id
+            LEFT JOIN (
+                SELECT
+                  member_id,
+                  json_group_array(json_object('alias', alias, 'alias_type', alias_type)) AS aliases_json
+                FROM member_alias
+                GROUP BY member_id
+            ) AS alias_lookup ON alias_lookup.member_id = m.author_id
             LEFT JOIN message_reference AS ref ON ref.message_id = m.id
             {where_clause}
             ORDER BY m.channel_id, m.timestamp
@@ -110,7 +146,7 @@ class WindowBuilder:
         cur = self.conn.execute(sql, params)
         for row in cur:
             try:
-                timestamp = _parse_timestamp(row[7])
+                timestamp = _parse_timestamp(row[8])
             except ValueError:
                 continue
             if timestamp is None:
@@ -122,10 +158,11 @@ class WindowBuilder:
                 author_id=row[3],
                 author_display=row[4] or row[3],
                 official_name=row[5],
-                content=row[6] or "",
+                aliases=_parse_aliases(row[6]),
+                content=row[7] or "",
                 timestamp=timestamp,
-                message_type=row[8] or "Default",
-                reply_to_id=row[9],
+                message_type=row[9] or "Default",
+                reply_to_id=row[10],
             )
 
     def iter_windows(self) -> Iterator[MessageWindow]:

@@ -20,12 +20,29 @@ class FactRecord:
     id: int
     type: FactType
     subject_id: str
+    subject_official_name: str | None
     object_id: str | None
+    object_official_name: str | None
     object_type: str | None
     attributes: dict[str, Any]
     timestamp: str
     confidence: float
     evidence: list[str]
+
+
+def _ensure_person_node(tx, member_id: str, official_name: str | None) -> None:
+    if not member_id:
+        return
+    params = {"id": member_id}
+    cleaned_name = _sanitize_value(official_name)
+    if cleaned_name:
+        params["official_name"] = cleaned_name
+        tx.run(
+            "MERGE (p:Person {id:$id}) SET p.realName=$official_name",
+            params,
+        )
+    else:
+        tx.run("MERGE (p:Person {id:$id})", params)
 
 
 def _fetch_facts(
@@ -41,13 +58,17 @@ def _fetch_facts(
           f.id,
           f.type,
           f.subject_id,
+          subj.official_name,
           f.object_id,
+          obj.official_name,
           f.object_type,
           f.attributes,
           f.ts,
           f.confidence,
           COALESCE(json_group_array(fe.message_id), '[]') AS evidence
         FROM fact AS f
+        LEFT JOIN member AS subj ON subj.id = f.subject_id
+        LEFT JOIN member AS obj ON obj.id = f.object_id
         LEFT JOIN fact_evidence AS fe ON fe.fact_id = f.id
         WHERE f.confidence >= ?
           AND f.type IN ({placeholders})
@@ -57,22 +78,24 @@ def _fetch_facts(
     params.extend(type_values)
 
     for row in conn.execute(sql, params):
-        raw_attributes = row[5]
+        raw_attributes = row[7]
         if isinstance(raw_attributes, bytes):
             raw_attributes = raw_attributes.decode()
         attributes = json.loads(raw_attributes)
 
-        evidence_raw = row[8]
+        evidence_raw = row[10]
         evidence = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
         yield FactRecord(
             id=int(row[0]),
             type=FactType(row[1]),
             subject_id=row[2],
-            object_id=row[3],
-            object_type=row[4],
+            subject_official_name=row[3],
+            object_id=row[4],
+            object_official_name=row[5],
+            object_type=row[6],
             attributes=attributes,
-            timestamp=row[6] or "",
-            confidence=float(row[7]),
+            timestamp=row[8] or "",
+            confidence=float(row[9]),
             evidence=evidence,
         )
 
@@ -90,6 +113,8 @@ def _set_relationship_properties(tx, query: str, params: dict[str, Any]) -> None
 
 
 def _handle_works_at(tx, fact: FactRecord) -> None:
+    _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
+
     organization = _sanitize_value(fact.attributes.get("organization"))
     if not organization:
         return
@@ -123,6 +148,8 @@ def _handle_works_at(tx, fact: FactRecord) -> None:
 
 
 def _handle_lives_in(tx, fact: FactRecord) -> None:
+    _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
+
     location = _sanitize_value(fact.attributes.get("location"))
     if not location:
         return
@@ -150,6 +177,8 @@ def _handle_lives_in(tx, fact: FactRecord) -> None:
 
 
 def _handle_talks_about(tx, fact: FactRecord) -> None:
+    _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
+
     topic = _sanitize_value(fact.attributes.get("topic"))
     if not topic:
         return
@@ -177,9 +206,13 @@ def _handle_talks_about(tx, fact: FactRecord) -> None:
 
 
 def _handle_close_to(tx, fact: FactRecord) -> None:
+    _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
+
     other_id = _sanitize_value(fact.object_id)
     if not other_id:
         return
+
+    _ensure_person_node(tx, other_id, fact.object_official_name)
 
     params = {
         "subject_id": fact.subject_id,

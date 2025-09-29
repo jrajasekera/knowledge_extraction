@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS member (
   avatar_url      TEXT
 );
 
+CREATE TABLE IF NOT EXISTS member_alias (
+  member_id   TEXT NOT NULL REFERENCES member(id) ON DELETE CASCADE,
+  alias       TEXT NOT NULL,
+  alias_type  TEXT CHECK (alias_type IS NULL OR alias_type IN ('nickname', 'first_name', 'variation')),
+  PRIMARY KEY (member_id, alias)
+);
+
 CREATE TABLE IF NOT EXISTS member_role (
   member_id       TEXT NOT NULL REFERENCES member(id) ON DELETE CASCADE,
   role_id         TEXT NOT NULL REFERENCES role(id) ON DELETE CASCADE,
