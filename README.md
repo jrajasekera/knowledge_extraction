@@ -131,6 +131,14 @@ Relationships:
 
 ## Getting started
 
+### 0) One-shot pipeline
+
+```bash
+python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./data --neo4j-password 'test'
+```
+
+This command applies the schema (idempotently), ingests every `*.json` export under `./data` while skipping files that were already recorded in `import_batch`, and pushes the data into Neo4j at `bolt://localhost:7687`.
+
 ### 1) Create the SQLite DB
 
 ```bash

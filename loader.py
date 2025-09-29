@@ -6,7 +6,9 @@
 
 import argparse
 import sqlite3
-from typing import Iterable, Dict, Any
+from pathlib import Path
+from typing import Any, Dict
+
 from neo4j import GraphDatabase
 
 def batched(cursor: sqlite3.Cursor, fetchsize: int):
@@ -264,41 +266,59 @@ def materialize_interactions(driver):
         sess.run(build_stmt)
 
 
+def load_into_neo4j(
+    sqlite_path: str | Path,
+    *,
+    neo4j_uri: str = "bolt://localhost:7687",
+    user: str = "neo4j",
+    password: str,
+) -> None:
+    conn = sqlite3.connect(str(sqlite_path))
+    cur = conn.cursor()
+    driver = GraphDatabase.driver(neo4j_uri, auth=(user, password))
+
+    try:
+        # Ensure constraints once
+        with driver.session() as sess:
+            for c in CONSTRAINTS:
+                sess.run(c)
+
+        print("Loading guilds...");        load_guilds(cur, driver)
+        print("Loading channels...");      load_channels(cur, driver)
+        print("Loading members...");       load_members(cur, driver)
+        print("Loading roles...");         load_roles(cur, driver)
+        print("Linking member roles...");  load_member_roles(cur, driver)
+        print("Loading messages...");      load_messages(cur, driver)
+        print("Loading replies...");       load_replies(cur, driver)
+        print("Loading mentions...");      load_mentions(cur, driver)
+        print("Loading reactions...");     load_reactions(cur, driver)
+        print("Loading attachments...");   load_attachments(cur, driver)
+        print("Loading embeds...");        load_embeds(cur, driver)
+
+        print("Materializing INTERACTED_WITH edges...")
+        materialize_interactions(driver)
+
+        print("Done. Consider running ingest.cql to build the GDS projection.")
+    finally:
+        driver.close()
+        conn.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sqlite", required=True, help="Path to SQLite db with schema.sql applied")
     ap.add_argument("--neo4j", default="bolt://localhost:7687")
     ap.add_argument("--user", default="neo4j")
     ap.add_argument("--password", required=True)
-    ap.add_argument("--batch", type=int, default=1000)
     args = ap.parse_args()
 
-    conn = sqlite3.connect(args.sqlite)
-    cur = conn.cursor()
+    load_into_neo4j(
+        args.sqlite,
+        neo4j_uri=args.neo4j,
+        user=args.user,
+        password=args.password,
+    )
 
-    driver = GraphDatabase.driver(args.neo4j, auth=(args.user, args.password))
-
-    # Ensure constraints once
-    with driver.session() as sess:
-        for c in CONSTRAINTS:
-            sess.run(c)
-
-    print("Loading guilds...");        load_guilds(cur, driver)
-    print("Loading channels...");      load_channels(cur, driver)
-    print("Loading members...");       load_members(cur, driver)
-    print("Loading roles...");         load_roles(cur, driver)
-    print("Linking member roles...");  load_member_roles(cur, driver)
-    print("Loading messages...");      load_messages(cur, driver)
-    print("Loading replies...");       load_replies(cur, driver)
-    print("Loading mentions...");      load_mentions(cur, driver)
-    print("Loading reactions...");     load_reactions(cur, driver)
-    print("Loading attachments...");   load_attachments(cur, driver)
-    print("Loading embeds...");        load_embeds(cur, driver)
-
-    print("Materializing INTERACTED_WITH edges...")
-    materialize_interactions(driver)
-
-    print("Done. Consider running ingest.cql to build the GDS projection.")
 
 if __name__ == "__main__":
     main()

@@ -9,12 +9,13 @@ Usage examples:
 """
 
 import argparse
+import datetime
 import sqlite3
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+
 import orjson
-import datetime
 
 def iso(dt: Optional[str]) -> Optional[str]:
     return dt if dt else None
@@ -24,6 +25,20 @@ def as_bool(v: Any) -> int:
 
 def ensure(conn: sqlite3.Connection, sql: str, params: Tuple):
     conn.execute(sql, params)
+
+def has_existing_import(
+    conn: sqlite3.Connection,
+    *,
+    source_path: str,
+    exported_at: str,
+    message_count: int,
+) -> bool:
+    cur = conn.execute(
+        "SELECT 1 FROM import_batch WHERE source_path = ? AND exported_at_iso = ? AND reported_msg_count = ? LIMIT 1",
+        (source_path, exported_at, int(message_count)),
+    )
+    return cur.fetchone() is not None
+
 
 def insert_import_batch(conn: sqlite3.Connection, source_path: str, exported_at: str, message_count: int) -> int:
     cur = conn.execute(
@@ -128,14 +143,27 @@ def insert_mentions(conn: sqlite3.Connection, msg_id: str, mentions: List[Dict[s
         ensure(conn, "INSERT OR IGNORE INTO message_mention (message_id, member_id) VALUES (?,?)",
                (str(msg_id), str(m.get("id"))))
 
-def process_file(conn: sqlite3.Connection, path: Path) -> int:
+def _load_json(path: Path) -> Dict[str, Any]:
     raw = path.read_bytes()
-    data = orjson.loads(raw)
+    return orjson.loads(raw)
+
+
+def process_file(conn: sqlite3.Connection, path: Path, *, skip_existing: bool = True) -> int:
+    data = _load_json(path)
 
     guild = data.get("guild", {})
     channel = data.get("channel", {})
     exported_at = data.get("exportedAt") or datetime.datetime.utcnow().isoformat()
     message_count = int(data.get("messageCount") or len(data.get("messages", [])))
+
+    if skip_existing and has_existing_import(
+        conn,
+        source_path=str(path),
+        exported_at=exported_at,
+        message_count=message_count,
+    ):
+        print(f"Skipping {path} (already imported)")
+        return 0
 
     batch_id = insert_import_batch(conn, str(path), exported_at, message_count)
 
@@ -184,34 +212,67 @@ def process_file(conn: sqlite3.Connection, path: Path) -> int:
     finalize_import_batch(conn, batch_id, loaded)
     return loaded
 
-def iter_json_files(json: Optional[Path], json_dir: Optional[Path]) -> Iterable[Path]:
-    if json and json.exists():
-        yield json
-    if json_dir and json_dir.exists():
-        for p in sorted(json_dir.rglob("*.json")):
-            yield p
 
-def main():
+def iter_json_files(*paths: Optional[Path]) -> Iterator[Path]:
+    for maybe_path in paths:
+        if maybe_path is None:
+            continue
+        if maybe_path.is_file():
+            yield maybe_path
+        elif maybe_path.is_dir():
+            for candidate in sorted(maybe_path.rglob("*.json")):
+                if candidate.is_file():
+                    yield candidate
+
+
+def ingest_exports(
+    db_path: str | Path,
+    *,
+    json: Path | None = None,
+    json_dir: Path | None = None,
+    additional_paths: Sequence[Path] | None = None,
+    skip_existing: bool = True,
+) -> int:
+    paths = list(iter_json_files(json, json_dir, *(additional_paths or ())))
+    if not paths:
+        raise ValueError("No JSON exports found to ingest.")
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON;")
+    total = 0
+    try:
+        with conn:
+            for path in paths:
+                print(f"Ingesting {path} ...")
+                total += process_file(conn, path, skip_existing=skip_existing)
+        print(f"Loaded {total} new messages across {len(paths)} file(s).")
+    finally:
+        conn.close()
+    return total
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True, help="Path to SQLite DB (schema.sql must be applied)")
     ap.add_argument("--json", type=Path, help="Path to a single Discord export .json")
     ap.add_argument("--json-dir", type=Path, help="Directory to crawl for *.json exports")
+    ap.add_argument(
+        "--no-skip-existing",
+        action="store_true",
+        help="Re-import even if an import_batch entry with matching metadata exists.",
+    )
     args = ap.parse_args()
 
     if not args.json and not args.json_dir:
         ap.error("Provide --json or --json-dir")
 
-    conn = sqlite3.connect(args.db)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    total = 0
-    try:
-        with conn:
-            for p in iter_json_files(args.json, args.json_dir):
-                print(f"Ingesting {p} ...")
-                total += process_file(conn, p)
-        print(f"Done. Loaded {total} messages.")
-    finally:
-        conn.close()
+    ingest_exports(
+        args.db,
+        json=args.json,
+        json_dir=args.json_dir,
+        skip_existing=not args.no_skip_existing,
+    )
+
 
 if __name__ == "__main__":
     main()
