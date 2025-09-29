@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from dataclasses import asdict
 from typing import Iterable, Sequence
 
@@ -13,7 +14,18 @@ from .config import FACT_DEFINITION_INDEX, IEConfig
 from .models import ExtractionResult
 from .prompts import build_messages, window_hint
 from .types import FactDefinition, FactType
-from .windowing import MessageWindow, iter_message_windows
+from .windowing import MessageWindow, WindowBuilder
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds == float("inf") or seconds != seconds:
+        return "unknown"
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
 
 
 def _insert_ie_run(conn: sqlite3.Connection, *, model_name: str, model_params: dict, config: IEConfig) -> int:
@@ -147,71 +159,117 @@ def run_ie_job(
             model_params=asdict(client_config),
             config=config,
         )
+        conn.commit()
 
-        total_windows = 0
+        builder = WindowBuilder(
+            conn,
+            window_size=config.window_size,
+        )
+
+        total_windows_available = builder.count_rows()
+        target_windows = (
+            min(total_windows_available, config.max_windows)
+            if config.max_windows is not None
+            else total_windows_available
+        )
+        if target_windows == 0:
+            print("[IE] No messages found for extraction.")
+            return
+
+        start_time = time.time()
+        processed_windows = 0
         total_facts = 0
         stored_facts = 0
 
-        for window in iter_message_windows(
-            conn,
-            window_size=config.window_size,
-            limit=config.max_windows,
-        ):
-            total_windows += 1
+        progress_template = "[IE] Progress: {done}/{total} ({percent:.1f}%) ETA {eta}"
+
+        def update_progress(final: bool = False) -> None:
+            if target_windows == 0:
+                return
+            elapsed = time.time() - start_time
+            rate = processed_windows / elapsed if elapsed > 0 else 0.0
+            remaining = target_windows - processed_windows
+            eta_seconds = remaining / rate if rate > 0 else float("inf")
+            eta_text = _format_duration(eta_seconds)
+            percent = (processed_windows / target_windows) * 100 if target_windows else 0.0
+            line = progress_template.format(
+                done=processed_windows,
+                total=target_windows,
+                percent=percent,
+                eta=eta_text,
+            )
+            end = "\n" if final else "\r"
+            print(line, end=end, flush=True)
+
+        for window in builder.iter_windows():
+            if config.max_windows is not None and processed_windows >= config.max_windows:
+                break
+
+            processed_windows += 1
             messages = build_messages(window, config.fact_types)
+
+            result: ExtractionResult | None = None
 
             try:
                 content = client.complete(messages)
             except httpx.HTTPError as exc:
+                print()
                 print(f"[IE] Request error for {window_hint(window)}: {exc}")
-                continue
+                content = None
 
-            if not content:
-                continue
+            if content:
+                try:
+                    result = ExtractionResult.model_validate_json(content)
+                except ValidationError as exc:
+                    print()
+                    print(f"[IE] Failed to parse response for {window_hint(window)}: {exc}")
+                    result = None
 
-            try:
-                result = ExtractionResult.model_validate_json(content)
-            except ValidationError as exc:
-                print(f"[IE] Failed to parse response for {window_hint(window)}: {exc}")
-                continue
+            if result:
+                for fact in result.facts:
+                    total_facts += 1
+                    if fact.type not in config.fact_types:
+                        continue
+                    if fact.confidence < config.confidence_threshold:
+                        continue
 
-            for fact in result.facts:
-                total_facts += 1
-                if fact.type not in config.fact_types:
-                    continue
-                if fact.confidence < config.confidence_threshold:
-                    continue
+                    definition: FactDefinition = FACT_DEFINITION_INDEX[fact.type]
+                    normalized_attributes = _normalize_attributes(
+                        fact.attributes,
+                        object_label=fact.object_label,
+                    )
+                    if not _required_attributes_present(definition, normalized_attributes):
+                        continue
 
-                definition: FactDefinition = FACT_DEFINITION_INDEX[fact.type]
-                normalized_attributes = _normalize_attributes(fact.attributes, object_label=fact.object_label)
-                if not _required_attributes_present(definition, normalized_attributes):
-                    continue
+                    object_id = fact.object_id or fact.object_label
+                    timestamp = fact.timestamp or window.focus.timestamp.isoformat()
+                    evidence = _filter_existing_evidence(
+                        conn,
+                        _evidence_list(window.focus.id, fact.evidence),
+                    )
+                    if not evidence:
+                        continue
 
-                object_id = fact.object_id or fact.object_label
-                timestamp = fact.timestamp or window.focus.timestamp.isoformat()
-                evidence = _filter_existing_evidence(
-                    conn,
-                    _evidence_list(window.focus.id, fact.evidence),
-                )
-                if not evidence:
-                    continue
+                    _upsert_fact(
+                        conn,
+                        run_id=run_id,
+                        fact_type=fact.type,
+                        subject_id=fact.subject_id,
+                        object_id=object_id,
+                        object_type=definition.object_type,
+                        attributes=normalized_attributes,
+                        timestamp=timestamp,
+                        confidence=fact.confidence,
+                        evidence=evidence,
+                    )
+                    stored_facts += 1
 
-                _upsert_fact(
-                    conn,
-                    run_id=run_id,
-                    fact_type=fact.type,
-                    subject_id=fact.subject_id,
-                    object_id=object_id,
-                    object_type=definition.object_type,
-                    attributes=normalized_attributes,
-                    timestamp=timestamp,
-                    confidence=fact.confidence,
-                    evidence=evidence,
-                )
-                stored_facts += 1
+            update_progress()
+            conn.commit()
 
+        update_progress(final=True)
         print(
-            f"[IE] Completed run {run_id}: windows={total_windows}, returned_facts={total_facts}, stored={stored_facts}"
+            f"[IE] Completed run {run_id}: windows={processed_windows}, returned_facts={total_facts}, stored={stored_facts}"
         )
 
     if external_conn is None:

@@ -61,7 +61,7 @@ class WindowBuilder:
         self.guild_ids = tuple(guild_ids or ())
         self.author_ids = tuple(author_ids or ())
 
-    def iter_rows(self) -> Iterator[MessageRecord]:
+    def _build_filters(self) -> tuple[str, list[str]]:
         filters: list[str] = []
         params: list[str] = []
 
@@ -79,6 +79,10 @@ class WindowBuilder:
             params.extend(self.author_ids)
 
         where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+        return where_clause, params
+
+    def iter_rows(self) -> Iterator[MessageRecord]:
+        where_clause, params = self._build_filters()
 
         sql = f"""
             SELECT
@@ -124,6 +128,13 @@ class WindowBuilder:
             messages = tuple(buffer)
             focus_index = len(messages) - 1
             yield MessageWindow(messages=messages, focus_index=focus_index)
+
+    def count_rows(self) -> int:
+        where_clause, params = self._build_filters()
+        sql = f"SELECT COUNT(*) FROM message AS m {where_clause}"
+        cur = self.conn.execute(sql, params)
+        row = cur.fetchone()
+        return int(row[0] or 0)
 
 
 def iter_message_windows(
