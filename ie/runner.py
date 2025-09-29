@@ -9,6 +9,7 @@ from typing import Iterable, Sequence
 import httpx
 from pydantic import ValidationError
 
+from .advanced_prompts import build_enhanced_prompt
 from .client import LlamaServerClient, LlamaServerConfig
 from .config import FACT_DEFINITION_INDEX, IEConfig
 from .models import ExtractionResult
@@ -28,9 +29,19 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def _insert_ie_run(conn: sqlite3.Connection, *, model_name: str, model_params: dict, config: IEConfig) -> int:
+def _insert_ie_run(
+    conn: sqlite3.Connection,
+    *,
+    model_name: str,
+    model_params: dict,
+    config: IEConfig,
+) -> int:
     params_json = json.dumps(model_params, sort_keys=True)
-    window_desc = f"window_size={config.window_size};fact_types={','.join(ft.value for ft in config.fact_types)}"
+    window_desc = (
+        f"window_size={config.window_size};"
+        f"fact_types={','.join(ft.value for ft in config.fact_types)};"
+        f"prompt={config.prompt_version}"
+    )
     cur = conn.execute(
         "INSERT INTO ie_run (model_name, model_params, window_hint) VALUES (?,?,?)",
         (model_name, params_json, window_desc),
@@ -206,7 +217,10 @@ def run_ie_job(
                 break
 
             processed_windows += 1
-            messages = build_messages(window, config.fact_types)
+            if config.prompt_version == "enhanced":
+                messages = build_enhanced_prompt(window, config.fact_types)
+            else:
+                messages = build_messages(window, config.fact_types)
 
             result: ExtractionResult | None = None
 

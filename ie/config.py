@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 from .types import FactAttribute, FactDefinition, FactType, build_fact_definition_index
 
@@ -67,6 +67,7 @@ class IEConfig:
     window_size: int = 4
     confidence_threshold: float = 0.5
     max_windows: int | None = None
+    prompt_version: Literal["legacy", "enhanced"] = "enhanced"
 
     def validate(self) -> "IEConfig":
         if self.window_size < 1:
@@ -76,4 +77,6 @@ class IEConfig:
         invalid = [fact for fact in self.fact_types if fact not in FACT_DEFINITION_INDEX]
         if invalid:
             raise ValueError(f"Unsupported fact types provided: {invalid}")
+        if self.prompt_version not in {"legacy", "enhanced"}:
+            raise ValueError("prompt_version must be 'legacy' or 'enhanced'")
         return self
