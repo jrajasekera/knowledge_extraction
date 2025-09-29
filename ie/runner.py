@@ -223,6 +223,8 @@ def run_ie_job(
                 except ValidationError as exc:
                     print()
                     print(f"[IE] Failed to parse response for {window_hint(window)}: {exc}")
+                    print("[IE] Raw response:")
+                    print(content)
                     result = None
 
             if result:
