@@ -37,6 +37,7 @@ class LlamaServerClient:
             "top_p": self.config.top_p,
             "max_tokens": self.config.max_tokens,
             "response_format": {"type": "json_object"},
+            "chat_template_kwargs": {"enable_thinking": True}
         }
         response = self._client.post(self.config.base_url, content=json.dumps(payload))
         response.raise_for_status()
