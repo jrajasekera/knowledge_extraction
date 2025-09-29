@@ -11,3 +11,4 @@ wheels/
 
 .idea/
 data/sample.json
+discord.db
