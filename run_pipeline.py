@@ -13,6 +13,13 @@ from import_discord_json import ingest_exports
 from loader import load_into_neo4j
 
 
+def _ensure_official_name_column(conn: sqlite3.Connection) -> None:
+    cur = conn.execute("PRAGMA table_info(member)")
+    columns = {row[1] for row in cur}
+    if "official_name" not in columns:
+        conn.execute("ALTER TABLE member ADD COLUMN official_name TEXT")
+
+
 def apply_schema(sqlite_path: Path, schema_path: Path) -> None:
     """Ensure the SQLite schema is applied before ingesting."""
     schema_sql = schema_path.read_text(encoding="utf-8")
@@ -20,6 +27,8 @@ def apply_schema(sqlite_path: Path, schema_path: Path) -> None:
     conn = sqlite3.connect(str(sqlite_path))
     try:
         conn.executescript(schema_sql)
+        _ensure_official_name_column(conn)
+        conn.commit()
     finally:
         conn.close()
 

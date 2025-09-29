@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS member (
   name            TEXT NOT NULL,
   discriminator   TEXT NOT NULL,
   nickname        TEXT,
+  official_name   TEXT,
   color_hex       TEXT,
   is_bot          INTEGER NOT NULL CHECK (is_bot IN (0,1)),
   avatar_url      TEXT

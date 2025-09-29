@@ -291,6 +291,8 @@ IE uses a local `llama.cpp`/`llama-server` deployment (OpenAI-compatible API) to
 
 Facts below a configurable confidence threshold are discarded before graph materialization. Evidence (message IDs) is recorded in `fact_evidence` for traceability.
 
+> Tip: populate `member.official_name` in SQLite (`UPDATE member SET official_name='John Smith' WHERE id='...';`) so the IE prompts can disambiguate real names from Discord handles.
+
 ### Windowing scaffolding
 
 `ie/windowing.py` streams channel-ordered message windows (default size 4) so the IE runner can provide the language model with short conversational context while preserving provenance. You can narrow extraction to specific guilds/channels/authors or cap the number of windows for testing.

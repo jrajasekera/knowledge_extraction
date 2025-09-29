@@ -21,10 +21,14 @@ class MessageRecord:
     guild_id: str
     author_id: str
     author_display: str
+    official_name: str | None
     content: str
     timestamp: datetime
     message_type: str
     reply_to_id: str | None
+
+    def author_label(self) -> str:
+        return self.official_name or self.author_display
 
 
 @dataclass(slots=True)
@@ -38,7 +42,7 @@ class MessageWindow:
 
     def as_text(self) -> str:
         return "\n\n".join(
-            f"[{record.timestamp.isoformat()}] {record.author_display}: {record.content.strip()}"
+            f"[{record.timestamp.isoformat()}] {record.author_label()}: {record.content.strip()}"
             for record in self.messages
         )
 
@@ -91,6 +95,7 @@ class WindowBuilder:
               m.guild_id,
               m.author_id,
               COALESCE(member.nickname, member.name) AS display_name,
+              member.official_name,
               m.content,
               m.timestamp,
               m.type,
@@ -104,7 +109,10 @@ class WindowBuilder:
 
         cur = self.conn.execute(sql, params)
         for row in cur:
-            timestamp = _parse_timestamp(row[6])
+            try:
+                timestamp = _parse_timestamp(row[7])
+            except ValueError:
+                continue
             if timestamp is None:
                 continue
             yield MessageRecord(
@@ -113,10 +121,11 @@ class WindowBuilder:
                 guild_id=row[2],
                 author_id=row[3],
                 author_display=row[4] or row[3],
-                content=row[5] or "",
+                official_name=row[5],
+                content=row[6] or "",
                 timestamp=timestamp,
-                message_type=row[7] or "Default",
-                reply_to_id=row[8],
+                message_type=row[8] or "Default",
+                reply_to_id=row[9],
             )
 
     def iter_windows(self) -> Iterator[MessageWindow]:

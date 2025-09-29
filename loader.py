@@ -45,7 +45,8 @@ MERGE (c)-[:IN_GUILD]->(g)
 MERGE_MEMBER = """
 MERGE (p:Person {id:$id})
 SET p.name=$name, p.nickname=$nickname, p.discriminator=$discriminator,
-    p.avatarUrl=$avatar_url, p.colorHex=$color_hex, p.isBot=$is_bot
+    p.avatarUrl=$avatar_url, p.colorHex=$color_hex, p.isBot=$is_bot,
+    p.realName=$official_name
 """
 
 MERGE_ROLE = """
@@ -128,14 +129,14 @@ def load_channels(cur, driver):
             sess.execute_write(txfun)
 
 def load_members(cur, driver):
-    cur.execute("SELECT id, name, discriminator, nickname, color_hex, is_bot, avatar_url FROM member")
+    cur.execute("SELECT id, name, discriminator, nickname, official_name, color_hex, is_bot, avatar_url FROM member")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
             def txfun(tx):
-                for (pid, name, disc, nick, color, is_bot, avatar) in rows:
+                for (pid, name, disc, nick, official_name, color, is_bot, avatar) in rows:
                     run_cypher(tx, MERGE_MEMBER, {
                         "id":pid, "name":name, "discriminator":disc, "nickname":nick,
-                        "color_hex":color, "is_bot":bool(is_bot), "avatar_url":avatar
+                        "official_name":official_name, "color_hex":color, "is_bot":bool(is_bot), "avatar_url":avatar
                     })
             sess.execute_write(txfun)
 
