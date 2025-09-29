@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import asdict
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import httpx
 from pydantic import ValidationError
@@ -54,6 +54,19 @@ def _evidence_list(focus_message_id: str, supplied: Iterable[str]) -> list[str]:
     if focus_message_id not in evidence:
         evidence.append(focus_message_id)
     return evidence
+
+
+def _filter_existing_evidence(conn: sqlite3.Connection, message_ids: Sequence[str]) -> list[str]:
+    unique = [msg_id for msg_id in dict.fromkeys(message_ids) if msg_id]
+    if not unique:
+        return []
+    placeholders = ",".join("?" for _ in unique)
+    rows = conn.execute(
+        f"SELECT id FROM message WHERE id IN ({placeholders})",
+        unique,
+    )
+    existing = {row[0] for row in rows}
+    return [msg_id for msg_id in unique if msg_id in existing]
 
 
 def _upsert_fact(
@@ -157,7 +170,6 @@ def run_ie_job(
                 continue
 
             try:
-                # print("[IE] LLM response:", content)
                 result = ExtractionResult.model_validate_json(content)
             except ValidationError as exc:
                 print(f"[IE] Failed to parse response for {window_hint(window)}: {exc}")
@@ -177,7 +189,12 @@ def run_ie_job(
 
                 object_id = fact.object_id or fact.object_label
                 timestamp = fact.timestamp or window.focus.timestamp.isoformat()
-                evidence = _evidence_list(window.focus.id, fact.evidence)
+                evidence = _filter_existing_evidence(
+                    conn,
+                    _evidence_list(window.focus.id, fact.evidence),
+                )
+                if not evidence:
+                    continue
 
                 _upsert_fact(
                     conn,

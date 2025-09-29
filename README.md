@@ -139,6 +139,13 @@ python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./
 
 This command applies the schema (idempotently), ingests every `*.json` export under `./data` while skipping files that were already recorded in `import_batch`, and pushes the data into Neo4j at `bolt://localhost:7687`.
 
+By default the pipeline will also:
+
+- Trigger the llama-server IE pass (`GLM-4.5-Air` at `http://localhost:8080/v1/chat/completions`) using window size 4 and store high-confidence facts in SQLite.
+- Materialize those facts into Neo4j via `facts_to_graph.py`, creating `Org`, `Place`, `Topic` nodes and relationship edges such as `WORKS_AT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`.
+
+Use `--no-ie` or `--no-fact-graph` to skip either stage, and tweak IE behaviour with flags such as `--ie-window-size`, `--ie-confidence`, `--llama-model`, etc.
+
 ### 1) Create the SQLite DB
 
 ```bash
@@ -288,11 +295,41 @@ Facts below a configurable confidence threshold are discarded before graph mater
 
 `ie/windowing.py` streams channel-ordered message windows (default size 4) so the IE runner can provide the language model with short conversational context while preserving provenance. You can narrow extraction to specific guilds/channels/authors or cap the number of windows for testing.
 
-### Next steps
+### Usage
 
-1. Implement the llama-server IE runner that prompts for the catalogue above and writes high-confidence facts into SQLite.
-2. Add `facts_to_graph.py` to merge facts into Neo4j nodes/relationships (e.g., `(:Person)-[:WORKS_AT]->(:Org)`).
-3. Wire IE into `run_pipeline.py` (automatic post-ingest run, with manual rerun toggle) and document configuration knobs (confidence threshold, window size, endpoint URL).
+- Run the pipeline end-to-end (ingest → IE → fact materialization):
+
+  ```bash
+  python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./exports --neo4j-password 'test'
+  ```
+
+- Rerun just the IE stage (adjust thresholds/window size as needed):
+
+  ```bash
+  python run_ie.py --sqlite ./discord.db --window-size 6 --confidence-threshold 0.6
+  ```
+
+- Rematerialize facts into Neo4j without re-ingesting data:
+
+  ```bash
+  python facts_to_graph.py --sqlite ./discord.db --password 'test' --min-confidence 0.6
+  ```
+
+### Verifying results
+
+- Inspect extracted facts in SQLite:
+
+  ```bash
+  sqlite3 ./discord.db "SELECT type, subject_id, object_id, json_extract(attributes, '$.organization'), confidence FROM fact ORDER BY confidence DESC LIMIT 10;"
+  ```
+
+- Confirm Neo4j relationships:
+
+  ```cypher
+  MATCH (p:Person)-[r:WORKS_AT]->(o:Org)
+  RETURN p.name, o.name, r.role, r.confidence, r.evidence
+  ORDER BY r.confidence DESC LIMIT 10;
+  ```
 
 ---
 
