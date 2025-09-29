@@ -269,6 +269,33 @@ We’re currently focused on **robust ingestion**:
 
 ---
 
+## Information Extraction (IE)
+
+IE uses a local `llama.cpp`/`llama-server` deployment (OpenAI-compatible API) to convert message windows into structured facts stored in SQLite (`fact` + `fact_evidence`) before being materialized back into Neo4j.
+
+### Initial fact catalogue
+
+| Fact type   | Subject                         | Object / target               | Key attributes (required **bold**)                   | Purpose |
+|-------------|----------------------------------|-------------------------------|------------------------------------------------------|---------|
+| `WORKS_AT`  | Discord member                   | Organization / company        | **organization**, role, location, start_date, end_date | Org graph + profile context |
+| `LIVES_IN`  | Discord member                   | Place / region                | **location**, since                                   | Geo clustering |
+| `TALKS_ABOUT` | Discord member                 | Topic / project               | **topic**, sentiment                                  | Interest detection |
+| `CLOSE_TO`  | Discord member (Person A)        | Discord member (Person B)     | closeness_basis                                       | Strengthen relationship edges |
+
+Facts below a configurable confidence threshold are discarded before graph materialization. Evidence (message IDs) is recorded in `fact_evidence` for traceability.
+
+### Windowing scaffolding
+
+`ie/windowing.py` streams channel-ordered message windows (default size 4) so the IE runner can provide the language model with short conversational context while preserving provenance. You can narrow extraction to specific guilds/channels/authors or cap the number of windows for testing.
+
+### Next steps
+
+1. Implement the llama-server IE runner that prompts for the catalogue above and writes high-confidence facts into SQLite.
+2. Add `facts_to_graph.py` to merge facts into Neo4j nodes/relationships (e.g., `(:Person)-[:WORKS_AT]->(:Org)`).
+3. Wire IE into `run_pipeline.py` (automatic post-ingest run, with manual rerun toggle) and document configuration knobs (confidence threshold, window size, endpoint URL).
+
+---
+
 ## Roadmap
 
 * [x] SQLite schema (`schema.sql`)
