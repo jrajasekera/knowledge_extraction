@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `run_pipeline.py` orchestrates the full ingest → IE → graph flow; use it once exports are staged in `data/` and the schema in `schema.sql`.
-- `import_discord_json.py`, `loader.py`, and `facts_to_graph.py` are standalone entry points for Discord → SQLite, SQLite → Neo4j, and fact materialization.
+- `import_discord_json.py`, `loader.py`, and `facts_to_graph.py` are standalone entry points for Discord → SQLite, SQLite → Neo4j, and fact materialization (now covering education, skills, relationships, events, preferences, and more).
 - IE-specific logic lives in `ie/` (client, prompts, runner, windowing) with reusable domain objects under `data_structures/ingestion/`.
 - Enhanced prompt scaffolding is split between `ie/advanced_prompts.py` and `ie/prompt_assets.json`; update the JSON to tweak few-shots without touching code.
 - Persisted artifacts (`discord.db`, JSON exports) sit at the repository root; keep large inputs in `data/` and check in only fixtures.
