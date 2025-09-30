@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .config import FACT_DEFINITION_INDEX
+from .prompts import build_participant_glossary
 from .types import FactDefinition, FactType
 from .windowing import MessageWindow
 
@@ -61,15 +62,6 @@ def _format_fact_catalog(fact_types: Sequence[FactType]) -> str:
     return "\n".join(lines).strip()
 
 
-def _format_participants(window: MessageWindow) -> str:
-    participants: dict[str, str] = {}
-    for record in window.messages:
-        label = record.official_name or record.author_display
-        participants.setdefault(record.author_id, label)
-    lines = [f"- {label} (ID: {author_id})" for author_id, label in participants.items()]
-    return "\n".join(lines)
-
-
 def build_enhanced_prompt(
     window: MessageWindow,
     fact_types: Sequence[FactType],
@@ -80,7 +72,7 @@ def build_enhanced_prompt(
     assets = load_assets(assets_path or ASSET_PATH)
 
     fact_catalog = _format_fact_catalog(fact_types)
-    participants = _format_participants(window)
+    participants = build_participant_glossary(window)
 
     user_sections = [
         "# Extraction Task",
