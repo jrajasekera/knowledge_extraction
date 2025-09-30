@@ -17,6 +17,8 @@ from .prompts import build_messages, window_hint
 from .types import FactDefinition, FactType
 from .windowing import MessageWindow, WindowBuilder
 
+MAX_PROMPT_ATTEMPTS = 3
+
 
 @dataclass(slots=True)
 class IERunStats:
@@ -386,23 +388,36 @@ def run_ie_job(
                 messages = build_messages(window, config.fact_types)
 
             result: ExtractionResult | None = None
+            attempt = 0
 
-            try:
-                content = client.complete(messages)
-            except httpx.HTTPError as exc:
-                print()
-                print(f"[IE] Request error for {window_hint(window)}: {exc}")
-                content = None
+            while attempt < MAX_PROMPT_ATTEMPTS:
+                attempt += 1
+                try:
+                    content = client.complete(messages)
+                except httpx.HTTPError as exc:
+                    print()
+                    print(f"[IE] Request error for {window_hint(window)}: {exc}")
+                    content = None
+                    break
 
-            if content:
+                if not content:
+                    break
+
                 try:
                     result = ExtractionResult.model_validate_json(content)
+                    break
                 except ValidationError as exc:
                     print()
-                    print(f"[IE] Failed to parse response for {window_hint(window)}: {exc}")
+                    print(
+                        f"[IE] Failed to parse response for {window_hint(window)} (attempt {attempt}/{MAX_PROMPT_ATTEMPTS}): {exc}"
+                    )
                     print("[IE] Raw response:")
                     print(content)
                     result = None
+                    if attempt < MAX_PROMPT_ATTEMPTS:
+                        print("[IE] Retrying with identical prompt due to invalid JSON format.")
+                    else:
+                        print("[IE] Giving up on this window after repeated formatting failures.")
 
             if result:
                 for fact in result.facts:
