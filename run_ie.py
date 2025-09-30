@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ie import IEConfig, LlamaServerConfig, run_ie_job
+from ie import IEConfig, LlamaServerConfig, reset_ie_progress, run_ie_job
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens to generate.")
     parser.add_argument("--timeout", type=float, default=600.0, help="HTTP client timeout (seconds).")
     parser.add_argument("--api-key", help="Optional bearer token if llama-server requires auth.")
+    parser.add_argument("--resume", action="store_true", help="Resume the most recent paused IE run.")
+    parser.add_argument(
+        "--reset-progress",
+        action="store_true",
+        help="Clear any saved IE progress before starting a new run.",
+    )
     return parser.parse_args()
 
 
@@ -44,7 +50,22 @@ def main() -> None:
         api_key=args.api_key,
     )
 
-    run_ie_job(args.sqlite, config=config, client_config=llama_config)
+    if args.reset_progress:
+        reset_ie_progress(args.sqlite)
+
+    stats = run_ie_job(
+        args.sqlite,
+        config=config,
+        client_config=llama_config,
+        resume=args.resume,
+    )
+
+    summary = stats.as_dict()
+    print(
+        f"[IE] Summary: run_id={summary['run_id']} processed={summary['processed_windows']}"
+        f" skipped={summary['skipped_windows']} total_processed={summary['total_processed']}"
+        f"/{summary['total_windows']} completed={summary['completed']}"
+    )
 
 
 if __name__ == "__main__":

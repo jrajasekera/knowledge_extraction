@@ -30,6 +30,18 @@ class FactRecord:
     evidence: list[str]
 
 
+@dataclass(slots=True)
+class MaterializeSummary:
+    candidates: int
+    processed: int
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "candidates": self.candidates,
+            "processed": self.processed,
+        }
+
+
 def _ensure_person_node(tx, member_id: str, official_name: str | None) -> None:
     if not member_id:
         return
@@ -72,6 +84,7 @@ def _fetch_facts(
         LEFT JOIN fact_evidence AS fe ON fe.fact_id = f.id
         WHERE f.confidence >= ?
           AND f.type IN ({placeholders})
+          AND f.graph_synced_at IS NULL
         GROUP BY f.id
     """
     params: list[Any] = [min_confidence]
@@ -127,6 +140,13 @@ def _ensure_external_person_node(tx, name: str) -> None:
 
 def _set_relationship_properties(tx, query: str, params: dict[str, Any]) -> None:
     tx.run(query, params)
+
+
+def _mark_fact_synced(conn: sqlite3.Connection, fact_id: int) -> None:
+    conn.execute(
+        "UPDATE fact SET graph_synced_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (fact_id,),
+    )
 
 
 def _handle_works_at(tx, fact: FactRecord) -> None:
@@ -977,38 +997,51 @@ def materialize_facts(
     password: str,
     fact_types: Sequence[FactType] | None = None,
     min_confidence: float = 0.5,
-) -> None:
-    fact_types = tuple(fact_types or HANDLERS.keys())
+) -> MaterializeSummary:
+    selected_types = tuple(fact_types or HANDLERS.keys())
 
     conn = sqlite3.connect(str(sqlite_path))
     conn.execute("PRAGMA foreign_keys = ON;")
 
-    try:
-        facts = list(
-            _fetch_facts(conn, fact_types=fact_types, min_confidence=min_confidence)
-        )
-    finally:
-        conn.close()
-
-    if not facts:
-        print("[facts_to_graph] No facts found meeting the criteria.")
-        return
-
     driver = GraphDatabase.driver(neo4j_uri, auth=(user, password))
+    processed = 0
+    missing_handlers: set[FactType] = set()
 
     try:
         with driver.session() as session:
-            for fact in facts:
+            for fact in _fetch_facts(
+                conn,
+                fact_types=selected_types,
+                min_confidence=min_confidence,
+            ):
                 handler = HANDLERS.get(fact.type)
-                if not handler:
-                    continue
-                session.execute_write(handler, fact)
+                if handler:
+                    session.execute_write(handler, fact)
+                else:
+                    missing_handlers.add(fact.type)
+
+                _mark_fact_synced(conn, fact.id)
+                processed += 1
+                if processed % 100 == 0:
+                    conn.commit()
+
+        conn.commit()
     finally:
         driver.close()
+        conn.close()
 
-    print(
-        f"[facts_to_graph] Materialized {len(facts)} facts (min_confidence={min_confidence})."
-    )
+    if processed == 0:
+        print("[facts_to_graph] No facts ready for materialization.")
+    else:
+        print(
+            f"[facts_to_graph] Materialized {processed} facts (min_confidence={min_confidence})."
+        )
+
+    if missing_handlers:
+        missing_names = ", ".join(sorted(ft.value for ft in missing_handlers))
+        print(f"[facts_to_graph] Skipped unsupported fact types: {missing_names}")
+
+    return MaterializeSummary(candidates=processed, processed=processed)
 
 
 def parse_args() -> argparse.Namespace:

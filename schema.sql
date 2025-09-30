@@ -181,7 +181,8 @@ CREATE TABLE IF NOT EXISTS fact (
   object_type     TEXT,
   attributes      TEXT NOT NULL,
   ts              TEXT,
-  confidence      REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1)
+  confidence      REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  graph_synced_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS fact_evidence (
@@ -189,6 +190,43 @@ CREATE TABLE IF NOT EXISTS fact_evidence (
   message_id      TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
   PRIMARY KEY (fact_id, message_id)
 );
+
+-- 6) Pipeline orchestration & progress tracking
+CREATE TABLE IF NOT EXISTS pipeline_run (
+  id             INTEGER PRIMARY KEY,
+  started_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at   TEXT,
+  status         TEXT NOT NULL CHECK (status IN ('running','paused','completed','failed','cancelled')),
+  current_stage  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_stage_state (
+  run_id      INTEGER NOT NULL REFERENCES pipeline_run(id) ON DELETE CASCADE,
+  stage       TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('pending','in_progress','completed')),
+  details     TEXT,
+  updated_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, stage)
+);
+
+CREATE TABLE IF NOT EXISTS ie_progress (
+  run_id            INTEGER PRIMARY KEY REFERENCES ie_run(id) ON DELETE CASCADE,
+  processed_windows INTEGER NOT NULL DEFAULT 0,
+  total_windows     INTEGER NOT NULL,
+  started_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ie_window_progress (
+  run_id           INTEGER NOT NULL REFERENCES ie_run(id) ON DELETE CASCADE,
+  focus_message_id TEXT NOT NULL,
+  processed_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, focus_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ie_window_progress_run_id
+  ON ie_window_progress(run_id);
 
 -- 5) Derived view
 CREATE VIEW IF NOT EXISTS message_interactions AS

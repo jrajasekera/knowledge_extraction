@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from typing import Iterable, Sequence
 
 import httpx
@@ -16,6 +16,104 @@ from .models import ExtractionResult
 from .prompts import build_messages, window_hint
 from .types import FactDefinition, FactType
 from .windowing import MessageWindow, WindowBuilder
+
+
+@dataclass(slots=True)
+class IERunStats:
+    run_id: int
+    processed_windows: int
+    skipped_windows: int
+    returned_facts: int
+    stored_facts: int
+    total_windows: int
+    total_processed: int
+    completed: bool
+
+    def as_dict(self) -> dict[str, int | bool]:
+        remaining = max(self.total_windows - self.total_processed, 0)
+        return {
+            "run_id": self.run_id,
+            "processed_windows": self.processed_windows,
+            "skipped_windows": self.skipped_windows,
+            "returned_facts": self.returned_facts,
+            "stored_facts": self.stored_facts,
+            "total_windows": self.total_windows,
+            "total_processed": self.total_processed,
+            "remaining_windows": remaining,
+            "completed": self.completed,
+        }
+
+
+def _get_ie_progress(conn: sqlite3.Connection) -> dict[str, int] | None:
+    row = conn.execute(
+        "SELECT run_id, processed_windows, total_windows FROM ie_progress LIMIT 1"
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "run_id": int(row[0]),
+        "processed_windows": int(row[1]),
+        "total_windows": int(row[2]),
+    }
+
+
+def _initialize_ie_progress(conn: sqlite3.Connection, run_id: int, total_windows: int) -> None:
+    conn.execute(
+        "INSERT INTO ie_progress (run_id, processed_windows, total_windows) VALUES (?, 0, ?)",
+        (run_id, total_windows),
+    )
+
+
+def _update_ie_progress(conn: sqlite3.Connection, run_id: int, processed_windows: int) -> None:
+    conn.execute(
+        "UPDATE ie_progress SET processed_windows = ?, updated_at = CURRENT_TIMESTAMP WHERE run_id = ?",
+        (processed_windows, run_id),
+    )
+
+
+def _clear_ie_progress(conn: sqlite3.Connection, run_id: int | None = None) -> None:
+    if run_id is None:
+        conn.execute("DELETE FROM ie_window_progress")
+        conn.execute("DELETE FROM ie_progress")
+    else:
+        conn.execute("DELETE FROM ie_window_progress WHERE run_id = ?", (run_id,))
+        conn.execute("DELETE FROM ie_progress WHERE run_id = ?", (run_id,))
+
+
+def _load_processed_window_ids(conn: sqlite3.Connection, run_id: int) -> set[str]:
+    cursor = conn.execute(
+        "SELECT focus_message_id FROM ie_window_progress WHERE run_id = ?",
+        (run_id,),
+    )
+    return {row[0] for row in cursor}
+
+
+def _record_window_processed(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    focus_message_id: str,
+) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO ie_window_progress (run_id, focus_message_id) VALUES (?, ?)",
+        (run_id, focus_message_id),
+    )
+
+
+def reset_ie_progress(sqlite_path: str | sqlite3.Connection) -> None:
+    if isinstance(sqlite_path, sqlite3.Connection):
+        conn = sqlite_path
+        external = True
+    else:
+        conn = sqlite3.connect(str(sqlite_path))
+        external = False
+
+    try:
+        with conn:
+            _clear_ie_progress(conn)
+    finally:
+        if not external:
+            conn.close()
 
 
 def _format_duration(seconds: float) -> str:
@@ -123,7 +221,7 @@ def _upsert_fact(
         conn.execute(
             """
             UPDATE fact
-            SET ie_run_id = ?, object_id = ?, object_type = ?, attributes = ?, ts = ?, confidence = ?
+            SET ie_run_id = ?, object_id = ?, object_type = ?, attributes = ?, ts = ?, confidence = ?, graph_synced_at = NULL
             WHERE id = ?
             """,
             (run_id, object_id, object_type, attributes_json, timestamp, confidence, fact_id),
@@ -151,7 +249,8 @@ def run_ie_job(
     *,
     config: IEConfig | None = None,
     client_config: LlamaServerConfig | None = None,
-) -> None:
+    resume: bool = False,
+) -> IERunStats:
     config = (config or IEConfig()).validate()
     client_config = client_config or LlamaServerConfig()
 
@@ -163,49 +262,110 @@ def run_ie_job(
     conn = external_conn or sqlite3.connect(str(sqlite_path))
     conn.execute("PRAGMA foreign_keys = ON;")
 
-    with (LlamaServerClient(client_config) as client, conn):
+    builder = WindowBuilder(
+        conn,
+        window_size=config.window_size,
+    )
+    total_windows_available = builder.count_rows()
+
+    progress = _get_ie_progress(conn)
+    resume_mode = bool(progress)
+
+    if resume and not resume_mode:
+        raise RuntimeError("No IE run is currently in progress to resume.")
+    if not resume and progress is not None:
+        raise RuntimeError("Existing IE progress found; pass resume=True or reset_ie_progress first.")
+
+    processed_ids: set[str]
+    if progress is None:
+        run_id = 0
+        total_windows = 0
+        total_processed = 0
+        processed_ids = set()
+    else:
+        run_id = int(progress["run_id"])
+        total_windows = int(progress["total_windows"])
+        total_processed = int(progress["processed_windows"])
+        processed_ids = _load_processed_window_ids(conn, run_id)
+        # make sure counters stay in sync
+        if len(processed_ids) > total_processed:
+            total_processed = len(processed_ids)
+
+    if total_windows == 0:
+        total_windows = (
+            min(total_windows_available, config.max_windows)
+            if config.max_windows is not None
+            else total_windows_available
+        )
+
+    if total_windows == 0:
+        print("[IE] No messages found for extraction.")
+        if progress is not None:
+            with conn:
+                _clear_ie_progress(conn, run_id)
+        if external_conn is None:
+            conn.close()
+        return IERunStats(
+            run_id=run_id,
+            processed_windows=0,
+            skipped_windows=0,
+            returned_facts=0,
+            stored_facts=0,
+            total_windows=0,
+            total_processed=0,
+            completed=True,
+        )
+
+    if progress is None:
         run_id = _insert_ie_run(
             conn,
             model_name=client_config.model,
             model_params=asdict(client_config),
             config=config,
         )
+        _initialize_ie_progress(conn, run_id, total_windows)
         conn.commit()
+        processed_ids = set()
+        total_processed = 0
 
-        builder = WindowBuilder(
-            conn,
-            window_size=config.window_size,
+    if total_processed >= total_windows:
+        print(f"[IE] Run {run_id} already complete; nothing to resume.")
+        with conn:
+            _clear_ie_progress(conn, run_id)
+        if external_conn is None:
+            conn.close()
+        return IERunStats(
+            run_id=run_id,
+            processed_windows=0,
+            skipped_windows=0,
+            returned_facts=0,
+            stored_facts=0,
+            total_windows=total_windows,
+            total_processed=total_processed,
+            completed=True,
         )
 
-        total_windows_available = builder.count_rows()
-        target_windows = (
-            min(total_windows_available, config.max_windows)
-            if config.max_windows is not None
-            else total_windows_available
-        )
-        if target_windows == 0:
-            print("[IE] No messages found for extraction.")
-            return
-
+    with (LlamaServerClient(client_config) as client, conn):
         start_time = time.time()
-        processed_windows = 0
-        total_facts = 0
+        processed_this_run = 0
+        skipped_windows = 0
+        returned_facts = 0
         stored_facts = 0
+        total_facts_returned = 0
 
         progress_template = "[IE] Progress: {done}/{total} ({percent:.1f}%) ETA {eta}"
 
         def update_progress(final: bool = False) -> None:
-            if target_windows == 0:
-                return
             elapsed = time.time() - start_time
-            rate = processed_windows / elapsed if elapsed > 0 else 0.0
-            remaining = target_windows - processed_windows
+            processed_for_rate = processed_this_run if processed_this_run else 0
+            rate = processed_for_rate / elapsed if elapsed > 0 else 0.0
+            remaining = max(total_windows - total_processed, 0)
             eta_seconds = remaining / rate if rate > 0 else float("inf")
             eta_text = _format_duration(eta_seconds)
-            percent = (processed_windows / target_windows) * 100 if target_windows else 0.0
+            percent = (total_processed / total_windows) * 100 if total_windows else 0.0
             line = progress_template.format(
-                done=processed_windows,
-                total=target_windows,
+                done=total_processed,
+                total=total_windows,
                 percent=percent,
                 eta=eta_text,
             )
@@ -213,10 +373,13 @@ def run_ie_job(
             print(line, end=end, flush=True)
 
         for window in builder.iter_windows():
-            if config.max_windows is not None and processed_windows >= config.max_windows:
+            if total_processed >= total_windows:
                 break
 
-            processed_windows += 1
+            if window.focus.id in processed_ids:
+                skipped_windows += 1
+                continue
+
             if config.prompt_version == "enhanced":
                 messages = build_enhanced_prompt(window, config.fact_types)
             else:
@@ -243,7 +406,7 @@ def run_ie_job(
 
             if result:
                 for fact in result.facts:
-                    total_facts += 1
+                    total_facts_returned += 1
                     if fact.type not in config.fact_types:
                         continue
                     if fact.confidence < config.confidence_threshold:
@@ -279,14 +442,58 @@ def run_ie_job(
                         evidence=evidence,
                     )
                     stored_facts += 1
+                    returned_facts += 1
+
+            processed_ids.add(window.focus.id)
+            processed_this_run += 1
+            total_processed += 1
+
+            _record_window_processed(
+                conn,
+                run_id=run_id,
+                focus_message_id=window.focus.id,
+            )
+            _update_ie_progress(conn, run_id, total_processed)
 
             update_progress()
             conn.commit()
 
         update_progress(final=True)
+
+        completed = total_processed >= total_windows
+
         print(
-            f"[IE] Completed run {run_id}: windows={processed_windows}, returned_facts={total_facts}, stored={stored_facts}"
+            f"[IE] Run {run_id} {'completed' if completed else 'paused'}:"
+            f" windows_processed={processed_this_run}, skipped={skipped_windows},"
+            f" returned_facts={total_facts_returned}, stored={stored_facts}"
         )
+
+        if completed:
+            _clear_ie_progress(conn, run_id)
+            conn.commit()
+
+        stats = IERunStats(
+            run_id=run_id,
+            processed_windows=processed_this_run,
+            skipped_windows=skipped_windows,
+            returned_facts=total_facts_returned,
+            stored_facts=stored_facts,
+            total_windows=total_windows,
+            total_processed=total_processed,
+            completed=completed,
+        )
+        return stats
 
     if external_conn is None:
         conn.close()
+
+    return IERunStats(
+        run_id=run_id,
+        processed_windows=0,
+        skipped_windows=0,
+        returned_facts=0,
+        stored_facts=0,
+        total_windows=total_windows,
+        total_processed=total_processed,
+        completed=True,
+    )
