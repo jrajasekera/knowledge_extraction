@@ -13,7 +13,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Execute the information extraction pass over SQLite data.")
     parser.add_argument("--sqlite", type=Path, default=Path("./discord.db"), help="Path to the SQLite database.")
     parser.add_argument("--window-size", type=int, default=8, help="Message window size to supply to the LLM.")
-    parser.add_argument("--max-windows", type=int, help="Optional cap on windows to process (for testing).")
+    parser.add_argument(
+        "--max-windows",
+        type=int,
+        help="Process only this many message windows for this invocation; omit when resuming to finish the remainder.",
+    )
     parser.add_argument("--confidence-threshold", type=float, default=0.5, help="Minimum confidence to store a fact.")
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
     parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
@@ -61,10 +65,14 @@ def main() -> None:
     )
 
     summary = stats.as_dict()
+    chunk_text = ""
+    target = summary.get("target_windows")
+    if isinstance(target, int) and target > 0:
+        chunk_text = f" chunk_target={target}"
     print(
         f"[IE] Summary: run_id={summary['run_id']} processed={summary['processed_windows']}"
         f" skipped={summary['skipped_windows']} total_processed={summary['total_processed']}"
-        f"/{summary['total_windows']} completed={summary['completed']}"
+        f"/{summary['total_windows']} completed={summary['completed']}{chunk_text}"
     )
 
 

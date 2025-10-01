@@ -29,6 +29,7 @@ class IERunStats:
     stored_facts: int
     total_windows: int
     total_processed: int
+    target_windows: int
     completed: bool
 
     def as_dict(self) -> dict[str, int | bool]:
@@ -42,6 +43,7 @@ class IERunStats:
             "total_windows": self.total_windows,
             "total_processed": self.total_processed,
             "remaining_windows": remaining,
+            "target_windows": self.target_windows,
             "completed": self.completed,
         }
 
@@ -294,11 +296,7 @@ def run_ie_job(
             total_processed = len(processed_ids)
 
     if total_windows == 0:
-        total_windows = (
-            min(total_windows_available, config.max_windows)
-            if config.max_windows is not None
-            else total_windows_available
-        )
+        total_windows = total_windows_available
 
     if total_windows == 0:
         print("[IE] No messages found for extraction.")
@@ -315,6 +313,7 @@ def run_ie_job(
             stored_facts=0,
             total_windows=0,
             total_processed=0,
+            target_windows=0,
             completed=True,
         )
 
@@ -330,7 +329,8 @@ def run_ie_job(
         processed_ids = set()
         total_processed = 0
 
-    if total_processed >= total_windows:
+    remaining_windows = max(total_windows - total_processed, 0)
+    if remaining_windows == 0:
         print(f"[IE] Run {run_id} already complete; nothing to resume.")
         with conn:
             _clear_ie_progress(conn, run_id)
@@ -344,8 +344,13 @@ def run_ie_job(
             stored_facts=0,
             total_windows=total_windows,
             total_processed=total_processed,
+            target_windows=0,
             completed=True,
         )
+
+    session_target = remaining_windows
+    if config.max_windows is not None:
+        session_target = min(session_target, config.max_windows)
 
     with (LlamaServerClient(client_config) as client, conn):
         start_time = time.time()
@@ -375,7 +380,7 @@ def run_ie_job(
             print(line, end=end, flush=True)
 
         for window in builder.iter_windows():
-            if total_processed >= total_windows:
+            if total_processed >= total_windows or processed_this_run >= session_target:
                 break
 
             if window.focus.id in processed_ids:
@@ -480,12 +485,16 @@ def run_ie_job(
         print(
             f"[IE] Run {run_id} {'completed' if completed else 'paused'}:"
             f" windows_processed={processed_this_run}, skipped={skipped_windows},"
-            f" returned_facts={total_facts_returned}, stored={stored_facts}"
+            f" returned_facts={total_facts_returned}, stored={stored_facts},"
+            f" target={session_target}"
         )
 
         if completed:
             _clear_ie_progress(conn, run_id)
             conn.commit()
+        else:
+            remaining_after = max(total_windows - total_processed, 0)
+            print(f"[IE] Remaining windows: {remaining_after}")
 
         stats = IERunStats(
             run_id=run_id,
@@ -495,6 +504,7 @@ def run_ie_job(
             stored_facts=stored_facts,
             total_windows=total_windows,
             total_processed=total_processed,
+            target_windows=session_target,
             completed=completed,
         )
         return stats
@@ -510,5 +520,6 @@ def run_ie_job(
         stored_facts=0,
         total_windows=total_windows,
         total_processed=total_processed,
+        target_windows=0,
         completed=True,
     )

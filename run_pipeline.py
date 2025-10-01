@@ -71,7 +71,14 @@ def _get_stage_status(conn: sqlite3.Connection, run_id: int, stage: str) -> str:
     if row is None:
         _ensure_stage_rows(conn, run_id)
         return "pending"
-    return str(row[0])
+    status = str(row[0])
+    if stage == "ie" and status == "completed":
+        ie_row = conn.execute(
+            "SELECT processed_windows, total_windows FROM ie_progress LIMIT 1"
+        ).fetchone()
+        if ie_row is not None and int(ie_row[0]) < int(ie_row[1]):
+            return "pending"
+    return status
 
 
 def _set_stage_status(
@@ -106,6 +113,18 @@ def _get_active_pipeline_run(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
         LIMIT 1
         """,
     ).fetchone()
+
+
+def _first_pending_stage(conn: sqlite3.Connection, run_id: int) -> Optional[str]:
+    rows = conn.execute(
+        "SELECT stage, status FROM pipeline_stage_state WHERE run_id = ?",
+        (run_id,),
+    ).fetchall()
+    status_map = {row[0]: row[1] for row in rows}
+    for stage in PIPELINE_STAGES:
+        if status_map.get(stage) != "completed":
+            return stage
+    return None
 
 
 def _create_pipeline_run(conn: sqlite3.Connection) -> int:
@@ -195,7 +214,10 @@ def _run_stage(
         _set_stage_status(conn, run_id, stage, "pending")
         raise
     else:
-        _set_stage_status(conn, run_id, stage, "completed", details)
+        desired_status = "completed"
+        if isinstance(details, dict) and not details.get("completed", True):
+            desired_status = "pending"
+        _set_stage_status(conn, run_id, stage, desired_status, details)
 
 
 def _run_pipeline(
@@ -320,7 +342,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-ie", action="store_true", help="Skip the IE stage after loading data.")
     parser.add_argument("--ie-window-size", type=int, default=8, help="Message window size for IE prompts.")
     parser.add_argument("--ie-confidence", type=float, default=0.5, help="Minimum confidence to store IE facts.")
-    parser.add_argument("--ie-max-windows", type=int, help="Optional cap on IE windows (for testing).")
+    parser.add_argument(
+        "--ie-max-windows",
+        type=int,
+        help="Process only this many IE windows during the current run; repeat with --resume to continue in chunks.",
+    )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
     parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
     parser.add_argument("--llama-temperature", type=float, default=0.2, help="Generation temperature for llama-server.")
@@ -379,9 +405,33 @@ def main() -> None:
         conn.close()
         raise
     else:
-        _update_run_status(conn, run_id, "completed", completed=True)
-        conn.close()
-        print("Pipeline complete.")
+        pending_stage = _first_pending_stage(conn, run_id)
+        if pending_stage is None:
+            _update_run_status(conn, run_id, "completed", completed=True)
+            conn.close()
+            print("Pipeline complete.")
+        else:
+            remaining_msg = ""
+            if pending_stage == "ie":
+                details_row = conn.execute(
+                    "SELECT details FROM pipeline_stage_state WHERE run_id = ? AND stage = ?",
+                    (run_id, pending_stage),
+                ).fetchone()
+                if details_row and details_row[0]:
+                    try:
+                        detail_data = json.loads(details_row[0])
+                        remaining = detail_data.get("remaining_windows")
+                        if isinstance(remaining, int):
+                            remaining_msg = f" ({remaining} windows remaining)"
+                    except json.JSONDecodeError:
+                        remaining_msg = ""
+
+            _update_run_status(conn, run_id, "paused", stage=pending_stage)
+            conn.close()
+            print(
+                f"Pipeline paused after stage '{pending_stage}'."
+                f" Resume with --resume to continue{remaining_msg}."
+            )
 
 
 if __name__ == "__main__":
