@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
+import statistics
 
 from neo4j import GraphDatabase
 
@@ -158,6 +159,51 @@ def sample_relationships(session, *, per_type_limit: int, available_types: set[s
     return samples
 
 
+def facts_temporal_breakdown(session) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
+    month_result = session.run(
+        """
+        MATCH ()-[r]->()
+        WHERE r.factId IS NOT NULL AND r.lastUpdated IS NOT NULL
+        WITH date(r.lastUpdated) AS d
+        WITH date({year: d.year, month: d.month, day: 1}) AS month, count(*) AS fact_count
+        RETURN month, fact_count
+        ORDER BY month
+        """
+    )
+    month_rows = [record.data() for record in month_result]
+
+    quarter_result = session.run(
+        """
+        MATCH ()-[r]->()
+        WHERE r.factId IS NOT NULL AND r.lastUpdated IS NOT NULL
+        WITH date(r.lastUpdated) AS d
+        WITH d.year AS year, toInteger(floor((d.month - 1) / 3)) + 1 AS quarter, count(*) AS fact_count
+        RETURN year, quarter, fact_count
+        ORDER BY year, quarter
+        """
+    )
+    quarter_rows = [record.data() for record in quarter_result]
+    return month_rows, quarter_rows
+
+
+def _detect_spikes(
+    rows: Sequence[Mapping[str, object]], value_key: str
+) -> tuple[list[Mapping[str, object]], float, float, float]:
+    values = [float(row.get(value_key, 0) or 0) for row in rows]
+    if not values:
+        return [], 0.0, 0.0, 0.0
+    if len(values) == 1:
+        value = values[0]
+        return list(rows), value, 0.0, value
+    avg = statistics.mean(values)
+    std = statistics.pstdev(values)
+    threshold = avg + max(std, 0.5 * avg)
+    spikes = [row for row in rows if float(row.get(value_key, 0) or 0) >= threshold]
+    if not spikes:
+        spikes = sorted(rows, key=lambda row: float(row.get(value_key, 0) or 0))[-3:]
+    return spikes, avg, std, threshold
+
+
 def run_snapshot(config: Neo4jConfig, *, per_type_limit: int) -> None:
     driver = GraphDatabase.driver(config.uri, auth=(config.user, config.password))
     try:
@@ -184,6 +230,49 @@ def run_snapshot(config: Neo4jConfig, *, per_type_limit: int) -> None:
             for rel_type, rows in samples.items():
                 print(f"\n-- {rel_type} --")
                 print(_format_table(rows))
+
+            print("\n=== Facts Over Time ===")
+            month_rows, quarter_rows = facts_temporal_breakdown(session)
+
+            if month_rows:
+                month_table = [
+                    {
+                        "month": str(row["month"]),
+                        "fact_count": row["fact_count"],
+                    }
+                    for row in month_rows
+                ]
+                print("\n-- By Month --")
+                print(_format_table(month_table))
+                spikes, avg, std, threshold = _detect_spikes(month_rows, "fact_count")
+                if spikes:
+                    print(
+                        f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):"
+                    )
+                    for row in spikes:
+                        print(f"    - {row['month']}: {row['fact_count']} facts")
+            else:
+                print("  (no timestamped facts)")
+
+            if quarter_rows:
+                quarter_table = [
+                    {
+                        "quarter": f"Q{row['quarter']} {row['year']}",
+                        "fact_count": row["fact_count"],
+                    }
+                    for row in quarter_rows
+                ]
+                print("\n-- By Quarter --")
+                print(_format_table(quarter_table))
+                spikes, avg, std, threshold = _detect_spikes(quarter_rows, "fact_count")
+                if spikes:
+                    print(
+                        f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):"
+                    )
+                    for row in spikes:
+                        print(
+                            f"    - Q{row['quarter']} {row['year']}: {row['fact_count']} facts"
+                        )
     finally:
         driver.close()
 
