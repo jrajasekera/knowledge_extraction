@@ -198,6 +198,13 @@ def _has_ie_progress(sqlite_path: Path) -> bool:
         conn.close()
 
 
+def _has_dirty_facts(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM fact WHERE graph_synced_at IS NULL LIMIT 1",
+    ).fetchone()
+    return row is not None
+
+
 def _run_stage(
     conn: sqlite3.Connection,
     run_id: int,
@@ -233,6 +240,21 @@ def _run_pipeline(
         if args.fact_types
         else None
     )
+
+    if args.resume and not args.no_fact_graph and _has_dirty_facts(conn):
+        print("[pipeline] Detected unsynced facts from previous run; materializing before resuming...")
+        summary = materialize_facts(
+            sqlite_path,
+            neo4j_uri=args.neo4j_uri,
+            user=args.neo4j_user,
+            password=args.neo4j_password,
+            fact_types=fact_types,
+            min_confidence=args.fact_confidence,
+        )
+        if summary.processed > 0:
+            details = summary.as_dict()
+            details["completed"] = True
+            _set_stage_status(conn, run_id, "facts", "pending", details)
 
     for stage in PIPELINE_STAGES:
         status = _get_stage_status(conn, run_id, stage)
