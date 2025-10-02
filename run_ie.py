@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--confidence-threshold", type=float, default=0.5, help="Minimum confidence to store a fact.")
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
-    parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
+    parser.add_argument("--llama-model", default="huizimao_gpt-oss-120b-uncensored", help="Model name to request from llama-server.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Generation temperature.")
     parser.add_argument("--top-p", type=float, default=0.95, help="Top-p nucleus sampling.")
     parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens to generate.")

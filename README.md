@@ -141,7 +141,7 @@ This command applies the schema (idempotently), ingests every `*.json` export un
 
 By default the pipeline will also:
 
-- Trigger the llama-server IE pass (`GLM-4.5-Air` at `http://localhost:8080/v1/chat/completions`) using window size 4 and store high-confidence facts in SQLite.
+- Trigger the llama-server IE pass (`huizimao_gpt-oss-120b-uncensored` at `http://localhost:8080/v1/chat/completions`) using window size 4 and store high-confidence facts in SQLite.
 - Materialize those facts into Neo4j via `facts_to_graph.py`, creating `Org`, `Place`, `Topic` nodes and relationship edges such as `WORKS_AT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`.
 
 Use `--no-ie` or `--no-fact-graph` to skip either stage, and tweak IE behaviour with flags such as `--ie-window-size`, `--ie-confidence`, `--llama-model`, etc.
