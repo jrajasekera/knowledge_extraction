@@ -88,6 +88,13 @@ class Neo4jConfig:
     password: str
 
 
+@dataclass(slots=True)
+class WeeklyMessageSeries:
+    member: str
+    total_messages: int
+    weekly_counts: list[tuple[str, int]]
+
+
 def _format_table(items: Iterable[Mapping[str, object]]) -> str:
     rows = list(items)
     if not rows:
@@ -204,7 +211,51 @@ def _detect_spikes(
     return spikes, avg, std, threshold
 
 
-def run_snapshot(config: Neo4jConfig, *, per_type_limit: int) -> None:
+def weekly_message_series(
+    session,
+    *,
+    member_limit: int,
+) -> list[WeeklyMessageSeries]:
+    """Return weekly message counts for the most active members."""
+    query = (
+        "MATCH (p:Person)-[:SENT]->(m:Message) "
+        "WHERE m.timestamp IS NOT NULL "
+        "WITH COALESCE(p.realName, p.id) AS member, date(datetime(m.timestamp)) AS message_date "
+        "WITH member, message_date.weekYear AS week_year, message_date.week AS week, count(*) AS message_count "
+        "ORDER BY member, week_year, week "
+        "WITH member, collect({week_year: week_year, week: week, message_count: message_count}) AS weekly_counts, "
+        "sum(message_count) AS total_messages "
+        "ORDER BY total_messages DESC "
+        "LIMIT $member_limit "
+        "RETURN member, total_messages, weekly_counts"
+    )
+    result = session.run(query, member_limit=member_limit)
+    series: list[WeeklyMessageSeries] = []
+    for record in result:
+        weekly_counts: list[tuple[str, int]] = []
+        for entry in record["weekly_counts"]:
+            week_year = entry.get("week_year")
+            week = entry.get("week")
+            if week_year is None or week is None:
+                continue
+            week_label = f"{int(week_year)}-W{int(week):02d}"
+            weekly_counts.append((week_label, int(entry["message_count"])))
+        series.append(
+            WeeklyMessageSeries(
+                member=record["member"],
+                total_messages=int(record["total_messages"]),
+                weekly_counts=weekly_counts,
+            )
+        )
+    return series
+
+
+def run_snapshot(
+    config: Neo4jConfig,
+    *,
+    per_type_limit: int,
+    message_member_limit: int,
+) -> None:
     driver = GraphDatabase.driver(config.uri, auth=(config.user, config.password))
     try:
         with driver.session() as session:
@@ -273,6 +324,61 @@ def run_snapshot(config: Neo4jConfig, *, per_type_limit: int) -> None:
                         print(
                             f"    - Q{row['quarter']} {row['year']}: {row['fact_count']} facts"
                         )
+
+            print("\n=== Member Message Volume ===")
+            message_series = weekly_message_series(
+                session, member_limit=message_member_limit
+            )
+            if not message_series:
+                print("  (no messages)")
+            else:
+                summary_rows = []
+                member_week_counts: dict[str, dict[str, int]] = {}
+                for series in message_series:
+                    week_count = len(series.weekly_counts)
+                    avg_per_week = (
+                        series.total_messages / week_count
+                        if week_count
+                        else series.total_messages
+                    )
+                    summary_rows.append(
+                        {
+                            "member": series.member,
+                            "total_messages": series.total_messages,
+                            "weeks_active": week_count,
+                            "avg_per_week": f"{avg_per_week:.1f}",
+                        }
+                    )
+                    counts: dict[str, int] = {}
+                    for week, count in series.weekly_counts:
+                        counts[week] = count
+                    member_week_counts[series.member] = counts
+
+                print("\n-- Summary --")
+                print(_format_table(summary_rows))
+
+                members = [row["member"] for row in summary_rows]
+                all_weeks = sorted(
+                    {
+                        week
+                        for counts in member_week_counts.values()
+                        for week in counts.keys()
+                    },
+                    key=lambda label: (
+                        int(label.split("-W")[0]),
+                        int(label.split("-W")[1]),
+                    ),
+                )
+
+                weekly_table = []
+                for week in all_weeks:
+                    row = {"week": week}
+                    for member in members:
+                        row[member] = member_week_counts.get(member, {}).get(week, 0)
+                    weekly_table.append(row)
+
+                print("\n-- Weekly Counts --")
+                print(_format_table(weekly_table))
     finally:
         driver.close()
 
@@ -290,13 +396,23 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Maximum rows to fetch per fact type sample",
     )
+    parser.add_argument(
+        "--message-member-limit",
+        type=int,
+        default=5,
+        help="Number of members to include when displaying weekly message counts",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = Neo4jConfig(uri=args.uri, user=args.user, password=args.password)
-    run_snapshot(config, per_type_limit=max(1, args.sample_limit))
+    run_snapshot(
+        config,
+        per_type_limit=max(1, args.sample_limit),
+        message_member_limit=max(1, args.message_member_limit),
+    )
 
 
 if __name__ == "__main__":
