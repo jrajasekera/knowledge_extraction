@@ -19,8 +19,14 @@ def parse_args() -> argparse.Namespace:
         help="Process only this many message windows for this invocation; omit when resuming to finish the remainder.",
     )
     parser.add_argument("--confidence-threshold", type=float, default=0.5, help="Minimum confidence to store a fact.")
+    parser.add_argument(
+        "--max-concurrent-requests",
+        type=int,
+        default=3,
+        help="Maximum number of simultaneous LLM requests to issue.",
+    )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
-    parser.add_argument("--llama-model", default="huizimao_gpt-oss-120b-uncensored", help="Model name to request from llama-server.")
+    parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
     parser.add_argument("--temperature", type=float, default=0.2, help="Generation temperature.")
     parser.add_argument("--top-p", type=float, default=0.95, help="Top-p nucleus sampling.")
     parser.add_argument("--max-tokens", type=int, default=4096, help="Maximum tokens to generate.")
@@ -42,6 +48,7 @@ def main() -> None:
         window_size=args.window_size,
         confidence_threshold=args.confidence_threshold,
         max_windows=args.max_windows,
+        max_concurrent_requests=args.max_concurrent_requests,
     )
 
     llama_config = LlamaServerConfig(

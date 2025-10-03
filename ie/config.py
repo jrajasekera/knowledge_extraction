@@ -303,6 +303,7 @@ class IEConfig:
     window_size: int = 4
     confidence_threshold: float = 0.5
     max_windows: int | None = None
+    max_concurrent_requests: int = 1
     prompt_version: Literal["legacy", "enhanced"] = "enhanced"
 
     def validate(self) -> "IEConfig":
@@ -310,6 +311,8 @@ class IEConfig:
             raise ValueError("window_size must be >= 1")
         if not 0.0 <= self.confidence_threshold <= 1.0:
             raise ValueError("confidence_threshold must be between 0 and 1")
+        if self.max_concurrent_requests < 1:
+            raise ValueError("max_concurrent_requests must be >= 1")
         invalid = [fact for fact in self.fact_types if fact not in FACT_DEFINITION_INDEX]
         if invalid:
             raise ValueError(f"Unsupported fact types provided: {invalid}")

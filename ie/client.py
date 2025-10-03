@@ -10,7 +10,7 @@ import httpx
 @dataclass(slots=True)
 class LlamaServerConfig:
     base_url: str = "http://localhost:8080/v1/chat/completions"
-    model: str = "huizimao_gpt-oss-120b-uncensored"
+    model: str = "GLM-4.5-Air"
     timeout: float = 60.0
     temperature: float = 0.2
     top_p: float = 0.95
@@ -37,7 +37,7 @@ class LlamaServerClient:
             "top_p": self.config.top_p,
             "max_tokens": self.config.max_tokens,
             "response_format": {"type": "json_object"},
-            "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "medium"},
+            "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"},
             "cache_prompt": True
         }
         response = self._client.post(self.config.base_url, content=json.dumps(payload))

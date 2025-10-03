@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from typing import Iterable, Sequence
 
@@ -46,6 +47,12 @@ class IERunStats:
             "target_windows": self.target_windows,
             "completed": self.completed,
         }
+
+
+@dataclass(slots=True)
+class _WindowTaskResult:
+    window: MessageWindow
+    result: ExtractionResult | None
 
 
 def _get_ie_progress(conn: sqlite3.Connection) -> dict[str, int] | None:
@@ -379,14 +386,10 @@ def run_ie_job(
             end = "\n" if final else "\r"
             print(line, end=end, flush=True)
 
-        for window in builder.iter_windows():
-            if total_processed >= total_windows or processed_this_run >= session_target:
-                break
+        max_workers = max(1, config.max_concurrent_requests)
+        in_flight: dict[Future[_WindowTaskResult], MessageWindow] = {}
 
-            if window.focus.id in processed_ids:
-                skipped_windows += 1
-                continue
-
+        def process_window(window: MessageWindow) -> _WindowTaskResult:
             if config.prompt_version == "enhanced":
                 messages = build_enhanced_prompt(window, config.fact_types)
             else:
@@ -402,8 +405,7 @@ def run_ie_job(
                 except httpx.HTTPError as exc:
                     print()
                     print(f"[IE] Request error for {window_hint(window)}: {exc}")
-                    content = None
-                    break
+                    return _WindowTaskResult(window=window, result=None)
 
                 if not content:
                     break
@@ -424,6 +426,19 @@ def run_ie_job(
                     else:
                         print("[IE] Giving up on this window after repeated formatting failures.")
 
+            return _WindowTaskResult(window=window, result=result)
+
+        def handle_future(fut: Future[_WindowTaskResult]) -> None:
+            nonlocal processed_this_run, total_processed, returned_facts, stored_facts, total_facts_returned
+            window = in_flight.pop(fut)
+            try:
+                task_result = fut.result()
+            except Exception as exc:
+                print()
+                print(f"[IE] Unexpected error processing {window_hint(window)}: {exc}")
+                task_result = _WindowTaskResult(window=window, result=None)
+
+            result = task_result.result
             if result:
                 for fact in result.facts:
                     total_facts_returned += 1
@@ -477,6 +492,42 @@ def run_ie_job(
 
             update_progress()
             conn.commit()
+
+        def drain(*, all_remaining: bool) -> None:
+            if not in_flight:
+                return
+            iterator = as_completed(list(in_flight.keys()))
+            if all_remaining:
+                futures_to_handle = list(iterator)
+            else:
+                try:
+                    futures_to_handle = [next(iterator)]
+                except StopIteration:
+                    return
+            for fut in futures_to_handle:
+                handle_future(fut)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for window in builder.iter_windows():
+                if total_processed >= total_windows or processed_this_run >= session_target:
+                    break
+
+                if window.focus.id in processed_ids:
+                    skipped_windows += 1
+                    continue
+
+                while in_flight and (
+                    len(in_flight) >= max_workers
+                    or processed_this_run + len(in_flight) >= session_target
+                    or total_processed + len(in_flight) >= total_windows
+                ):
+                    drain(all_remaining=False)
+
+                future = executor.submit(process_window, window)
+                in_flight[future] = window
+
+            while in_flight:
+                drain(all_remaining=True)
 
         update_progress(final=True)
 

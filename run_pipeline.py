@@ -308,6 +308,7 @@ def _run_pipeline(
                     window_size=args.ie_window_size,
                     confidence_threshold=args.ie_confidence,
                     max_windows=args.ie_max_windows,
+                    max_concurrent_requests=args.ie_max_concurrent_requests,
                 )
                 llama_config = LlamaServerConfig(
                     base_url=args.llama_url,
@@ -369,8 +370,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Process only this many IE windows during the current run; repeat with --resume to continue in chunks.",
     )
+    parser.add_argument(
+        "--ie-max-concurrent-requests",
+        type=int,
+        default=3,
+        help="Maximum number of simultaneous IE LLM requests to issue.",
+    )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
-    parser.add_argument("--llama-model", default="huizimao_gpt-oss-120b-uncensored", help="Model name to request from llama-server.")
+    parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
     parser.add_argument("--llama-temperature", type=float, default=0.2, help="Generation temperature for llama-server.")
     parser.add_argument("--llama-top-p", type=float, default=0.95, help="Top-p nucleus sampling for llama-server.")
     parser.add_argument("--llama-max-tokens", type=int, default=4096, help="Max tokens for llama-server responses.")
