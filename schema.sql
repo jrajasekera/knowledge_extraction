@@ -191,6 +191,41 @@ CREATE TABLE IF NOT EXISTS fact_evidence (
   PRIMARY KEY (fact_id, message_id)
 );
 
+-- 5) Fact deduplication audit and progress tracking
+CREATE TABLE IF NOT EXISTS fact_deduplication_audit (
+  id                   INTEGER PRIMARY KEY,
+  canonical_fact_id    INTEGER NOT NULL REFERENCES fact(id) ON DELETE CASCADE,
+  original_fact_ids    TEXT NOT NULL,
+  merge_reasoning      TEXT,
+  similarity_scores    TEXT,
+  processed_at         TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dedup_audit_canonical
+  ON fact_deduplication_audit(canonical_fact_id);
+
+CREATE TABLE IF NOT EXISTS deduplication_run (
+  id                          INTEGER PRIMARY KEY,
+  started_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  completed_at                TEXT,
+  status                      TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'paused')),
+  total_partitions            INTEGER,
+  processed_partitions        INTEGER DEFAULT 0,
+  facts_processed             INTEGER DEFAULT 0,
+  facts_merged                INTEGER DEFAULT 0,
+  candidate_groups_processed  INTEGER DEFAULT 0,
+  details                     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS deduplication_partition_progress (
+  run_id       INTEGER NOT NULL REFERENCES deduplication_run(id) ON DELETE CASCADE,
+  fact_type    TEXT NOT NULL,
+  subject_id   TEXT NOT NULL,
+  status       TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
+  updated_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (run_id, fact_type, subject_id)
+);
+
 -- 6) Pipeline orchestration & progress tracking
 CREATE TABLE IF NOT EXISTS pipeline_run (
   id             INTEGER PRIMARY KEY,
