@@ -10,6 +10,8 @@ from typing import Iterable, Sequence
 import httpx
 from pydantic import ValidationError
 
+from data_structures.ingestion import normalize_iso_timestamp
+
 from .advanced_prompts import build_enhanced_prompt
 from .client import LlamaServerClient, LlamaServerConfig
 from .config import FACT_DEFINITION_INDEX, IEConfig
@@ -215,6 +217,8 @@ def _upsert_fact(
     evidence: list[str],
 ) -> int:
     attributes_json = json.dumps(attributes, sort_keys=True, ensure_ascii=False)
+    normalized_timestamp = normalize_iso_timestamp(timestamp)
+    stored_timestamp = normalized_timestamp or ""
 
     row = conn.execute(
         """
@@ -235,7 +239,7 @@ def _upsert_fact(
             SET ie_run_id = ?, object_id = ?, object_type = ?, attributes = ?, ts = ?, confidence = ?, graph_synced_at = NULL
             WHERE id = ?
             """,
-            (run_id, object_id, object_type, attributes_json, timestamp, confidence, fact_id),
+            (run_id, object_id, object_type, attributes_json, stored_timestamp, confidence, fact_id),
         )
     else:
         cur = conn.execute(
@@ -243,7 +247,7 @@ def _upsert_fact(
             INSERT INTO fact (ie_run_id, type, subject_id, object_id, object_type, attributes, ts, confidence)
             VALUES (?,?,?,?,?,?,?,?)
             """,
-            (run_id, fact_type.value, subject_id, object_id, object_type, attributes_json, timestamp, confidence),
+            (run_id, fact_type.value, subject_id, object_id, object_type, attributes_json, stored_timestamp, confidence),
         )
         fact_id = int(cur.lastrowid)
 

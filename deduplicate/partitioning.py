@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterator
 
+from data_structures.ingestion import normalize_iso_timestamp
 from ie.types import FactType
 
 from .models import FactRecord, Partition
@@ -115,7 +116,8 @@ class FactPartitioner:
             evidence_raw = row["evidence"]
             evidence = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
             object_label = attributes.get("object_label")
-            timestamp = row["ts"] or ""
+            normalized_ts = normalize_iso_timestamp(row["ts"])
+            timestamp = normalized_ts or ""
             fact = FactRecord(
                 id=int(row["id"]),
                 ie_run_id=int(row["ie_run_id"]),

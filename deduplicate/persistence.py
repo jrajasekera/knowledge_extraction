@@ -5,6 +5,7 @@ import logging
 import sqlite3
 from typing import Sequence
 
+from data_structures.ingestion import normalize_iso_timestamp
 from .models import CanonicalFact, FactRecord, PersistenceOutcome
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class DeduplicationPersistence:
 
     def _insert_canonical_fact(self, ie_run_id: int, canonical: CanonicalFact) -> int:
         attributes_json = json.dumps(canonical.attributes or {}, sort_keys=True)
+        normalized_timestamp = normalize_iso_timestamp(canonical.timestamp)
         cursor = self._conn.execute(
             """
             INSERT INTO fact (
@@ -93,7 +95,7 @@ class DeduplicationPersistence:
                 canonical.object_id,
                 canonical.object_type,
                 attributes_json,
-                canonical.timestamp,
+                normalized_timestamp or "",
                 canonical.confidence,
             ),
         )

@@ -13,6 +13,7 @@ from typing import Any, Iterable, Sequence
 from neo4j import GraphDatabase
 
 from ie.types import FactType
+from data_structures.ingestion import normalize_iso_timestamp
 
 
 @dataclass(slots=True)
@@ -98,6 +99,7 @@ def _fetch_facts(
 
         evidence_raw = row[10]
         evidence = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
+        normalized_timestamp = normalize_iso_timestamp(row[8]) if row[8] else None
         yield FactRecord(
             id=int(row[0]),
             type=FactType(row[1]),
@@ -107,7 +109,7 @@ def _fetch_facts(
             object_official_name=row[5],
             object_type=row[6],
             attributes=attributes,
-            timestamp=row[8] or "",
+            timestamp=normalized_timestamp or "",
             confidence=float(row[9]),
             evidence=evidence,
         )

@@ -453,7 +453,7 @@ class DeduplicationOrchestrator:
         group: CandidateGroup,
         facts_lookup: Mapping[int, FactRecord],
         *,
-        preview_limit: int = 3,
+        preview_limit: int = 10,
     ) -> None:
         fact_ids = group.sorted_fact_ids()
         facts = [facts_lookup[fact_id] for fact_id in fact_ids]

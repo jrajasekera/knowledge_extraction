@@ -28,7 +28,7 @@ class DeduplicationProgress:
             """
             SELECT id, status, total_partitions, processed_partitions
             FROM deduplication_run
-            WHERE status IN ('running', 'paused')
+            WHERE status IN ('running', 'paused', 'failed')
             ORDER BY started_at DESC
             LIMIT 1
             """

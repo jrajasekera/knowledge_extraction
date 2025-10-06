@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Mapping
 
+from data_structures.ingestion import normalize_iso_timestamp
+
 from ..models import CanonicalFact, FactRecord, Partition
 
 
@@ -132,11 +134,17 @@ class CanonicalFactsParser:
         source_facts: list[FactRecord],
     ) -> str:
         if isinstance(value, str) and value.strip():
-            return value
+            sanitized = normalize_iso_timestamp(value)
+            if sanitized is not None:
+                return sanitized
         timestamps = [fact.timestamp for fact in source_facts if fact.timestamp]
         if not timestamps:
             return ""
-        return min(timestamps)
+        for ts in sorted(timestamps):
+            sanitized = normalize_iso_timestamp(ts)
+            if sanitized is not None:
+                return sanitized
+        return ""
 
     def _extract_reasoning(self, value: object) -> str:
         if not isinstance(value, str) or not value.strip():

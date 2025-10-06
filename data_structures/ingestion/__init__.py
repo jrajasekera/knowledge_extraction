@@ -20,6 +20,7 @@ from .models import (
     Reaction,
     Role,
 )
+from .timestamps import normalize_iso_timestamp
 
 __all__ = [
     "Attachment",
@@ -40,4 +41,5 @@ __all__ = [
     "MessageType",
     "Reaction",
     "Role",
+    "normalize_iso_timestamp",
 ]
