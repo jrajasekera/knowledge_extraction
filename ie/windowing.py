@@ -50,7 +50,14 @@ class MessageWindow:
 
     def as_text(self) -> str:
         return "\n\n".join(
-            f"[{record.timestamp.isoformat()}] {record.author_label()}: {record.content.strip()}"
+            " | ".join(
+                (
+                    f"message_id={record.id}",
+                    f"author_id={record.author_id}",
+                    record.timestamp.isoformat(),
+                    f"{record.author_label()}: {record.content.strip()}",
+                )
+            )
             for record in self.messages
         )
 

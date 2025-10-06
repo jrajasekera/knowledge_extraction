@@ -26,7 +26,7 @@ class FactRecord:
     object_official_name: str | None
     object_type: str | None
     attributes: dict[str, Any]
-    timestamp: str
+    timestamp: str | None
     confidence: float
     evidence: list[str]
 
@@ -109,7 +109,7 @@ def _fetch_facts(
             object_official_name=row[5],
             object_type=row[6],
             attributes=attributes,
-            timestamp=normalized_timestamp or "",
+            timestamp=normalized_timestamp,
             confidence=float(row[9]),
             evidence=evidence,
         )
