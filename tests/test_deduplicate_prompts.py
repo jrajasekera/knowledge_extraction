@@ -31,7 +31,7 @@ def _fact_record(
     )
 
 
-def test_build_messages_includes_type_specific_guidance() -> None:
+def test_build_messages_includes_category_template_sections() -> None:
     fact = _fact_record(
         fact_id=1,
         fact_type=FactType.WORKS_AT,
@@ -52,13 +52,14 @@ def test_build_messages_includes_type_specific_guidance() -> None:
         "You are a knowledge graph deduplication specialist working on a Discord conversation analysis system."
     )
     user_prompt = messages[1]["content"]
-    assert "WORKS_AT Rules" in user_prompt
-    assert "Confidence Calculation Rules" in user_prompt
+    assert "Category: Temporal Employment/Education" in user_prompt
+    assert "WORKS_AT: Keep separate entries for distinct employment periods" in user_prompt
+    assert "Category Confidence Guidance" in user_prompt
     assert "Few-Shot Examples:" in user_prompt
     assert "Example: clear_duplicate_works_at" in user_prompt
 
 
-def test_build_messages_uses_generic_guidance_when_missing_fact_specific_rules() -> None:
+def test_build_messages_includes_relationship_category_guidance() -> None:
     fact = _fact_record(
         fact_id=2,
         fact_type=FactType.CLOSE_TO,
@@ -76,10 +77,11 @@ def test_build_messages_uses_generic_guidance_when_missing_fact_specific_rules()
     messages = build_messages(partition, [fact])
 
     user_prompt = messages[1]["content"]
-    assert "Generic Deduplication Guidance" in user_prompt
+    assert "Category: Relationships/Events" in user_prompt
+    assert "CLOSE_TO: Verify the same counterpart person" in user_prompt
     assert "Quality Validation Checklist" in user_prompt
     assert "Output Schema" in user_prompt
-    assert "Example:" in user_prompt
+    assert "Example: relationship_duplicate" in user_prompt
 
 
 def test_build_messages_includes_attribute_priorities() -> None:
@@ -102,3 +104,4 @@ def test_build_messages_includes_attribute_priorities() -> None:
     user_prompt = messages[1]["content"]
     assert "Attribute Priorities" in user_prompt
     assert "Critical: location" in user_prompt
+    assert "Example: residence_split" in user_prompt

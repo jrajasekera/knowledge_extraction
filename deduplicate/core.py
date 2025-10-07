@@ -144,6 +144,21 @@ class DeduplicationOrchestrator:
                 facts_lookup = {fact.id: fact for fact in selection.facts}
                 minhash_pairs = minhash_detector.find_candidate_pairs(selection.facts)
                 embedding_pairs = embedding_detector.find_candidate_pairs(selection.facts)
+                minhash_pair_set = {
+                    tuple(sorted((pair.source_id, pair.target_id))) for pair in minhash_pairs
+                }
+                embedding_pair_set = {
+                    tuple(sorted((pair.source_id, pair.target_id))) for pair in embedding_pairs
+                }
+                shared_pairs = minhash_pair_set & embedding_pair_set
+                logger.info(
+                    "Similarity pairs summary for partition %s/%s: minhash=%d, embedding=%d, overlap=%d",
+                    partition.fact_type.value,
+                    partition.subject_id,
+                    len(minhash_pairs),
+                    len(embedding_pairs),
+                    len(shared_pairs),
+                )
                 candidate_groups = grouper.build_groups(
                     partition,
                     selection.facts,
@@ -464,11 +479,19 @@ class DeduplicationOrchestrator:
             method: len(pairs)
             for method, pairs in sorted(group.similarity.items())
         }
+        sources = [method for method, count in similarity_counts.items() if count]
+        if not sources:
+            source_summary = "none"
+        elif len(sources) == 1:
+            source_summary = f"{sources[0]}-only"
+        else:
+            source_summary = "+".join(sorted(sources))
         logger.info(
-            "Candidate group: %d facts for partition %s/%s (similarity pairs: %s)",
+            "Candidate group: %d facts for partition %s/%s (sources=%s, pair_counts=%s)",
             len(facts),
             group.partition.fact_type.value,
             group.partition.subject_id,
+            source_summary,
             similarity_counts or "{}",
         )
         for fact in facts[:preview_limit]:
