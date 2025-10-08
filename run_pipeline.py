@@ -378,7 +378,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
     parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
-    parser.add_argument("--llama-temperature", type=float, default=0.2, help="Generation temperature for llama-server.")
+    parser.add_argument("--llama-temperature", type=float, default=0.3, help="Generation temperature for llama-server.")
     parser.add_argument("--llama-top-p", type=float, default=0.95, help="Top-p nucleus sampling for llama-server.")
     parser.add_argument("--llama-max-tokens", type=int, default=4096, help="Max tokens for llama-server responses.")
     parser.add_argument("--llama-timeout", type=float, default=600.0, help="llama-server HTTP timeout (seconds).")
