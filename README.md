@@ -69,6 +69,26 @@ SQLite (staging, provenance)
 
 ---
 
+## Memory Agent Service
+
+This repository now includes a standalone **memory agent** microservice designed to surface relevant facts from the Neo4j knowledge graph for downstream chat agents. The service exposes a FastAPI application (`memory_agent.app:create_app`) that orchestrates the LangGraph-powered retrieval workflow and a catalog of Neo4j-backed tools.
+
+Start the service locally once your graph is populated:
+
+```bash
+uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
+```
+
+Key endpoints:
+
+* `POST /api/memory/retrieve` – accept recent Discord messages and return formatted fact strings plus confidence + metadata.
+* `POST /api/memory/retrieve/debug` – optional verbose trace (enable via `ENABLE_DEBUG_ENDPOINT=true`).
+* `GET /health` – liveness + dependency checks.
+
+Environment variables cover Neo4j credentials, LLM provider/model, embedding settings, iteration limits, and CORS/rate-limiting controls (see `memory_agent/config.py`).
+
+---
+
 ## Data Model
 
 ### SQLite (staging & provenance)

@@ -11,7 +11,7 @@ import httpx
 class LlamaServerConfig:
     base_url: str = "http://localhost:8080/v1/chat/completions"
     model: str = "GLM-4.5-Air"
-    timeout: float = 600.0
+    timeout: float = 1200.0
     temperature: float = 0.3
     top_p: float = 0.95
     max_tokens: int = 4096
