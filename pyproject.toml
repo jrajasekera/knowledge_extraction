@@ -13,7 +13,22 @@ dependencies = [
     "sentence-transformers>=5.0.0",
     "datasketch>=1.6.5",
     "pytest>=8.3.3",
+    "fastapi>=0.118.3",
+    "uvicorn[standard]>=0.37.0",
+    "langgraph>=0.6.10",
+    "langchain>=0.3.27",
+    "langchain-core>=0.3.79",
+    "langchain-openai>=0.3.35",
+    "python-dotenv>=1.1.1",
+    "prometheus-client>=0.23.1",
+    "langchain-anthropic>=0.3.22",
 ]
 
 [tool.uv.sources]
 transformers = { git = "https://github.com/huggingface/transformers", rev = "v4.56.0-Embedding-Gemma-preview" }
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.2.0",
+    "pytest-httpx>=0.35.0",
+]
