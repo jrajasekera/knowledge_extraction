@@ -373,7 +373,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ie-max-concurrent-requests",
         type=int,
-        default=3,
+        default=1,
         help="Maximum number of simultaneous IE LLM requests to issue.",
     )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
