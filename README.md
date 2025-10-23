@@ -87,6 +87,24 @@ Key endpoints:
 
 Environment variables cover Neo4j credentials, LLM provider/model, embedding settings, iteration limits, and CORS/rate-limiting controls (see `memory_agent/config.py`).
 
+### Semantic Search Embeddings
+
+For the semantic search tool to return useful results, populate the fact embedding index in Neo4j:
+
+```bash
+# Ensure Neo4j is running and contains materialised fact relationships (factId on edges)
+uv run python scripts/embed_facts.py --cleanup
+```
+
+The script will:
+
+- generate text summaries for each fact-bearing relationship,
+- embed them with the configured sentence-transformers model (`EMBEDDING_MODEL`),
+- upsert `:FactEmbedding` nodes with the vector payload, and
+- create / refresh the `fact_embeddings` vector index (cosine similarity, 768 dims).
+
+Re-run the script whenever facts change or after backfills. The `--cleanup` flag removes embeddings for facts that have been deleted from the graph.
+
 ---
 
 ## Data Model

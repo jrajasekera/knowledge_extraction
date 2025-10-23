@@ -44,14 +44,15 @@ class FindPeopleByLocationTool(ToolBase[FindPeopleByLocationInput, FindPeopleByL
 
     def run(self, input_data: FindPeopleByLocationInput) -> FindPeopleByLocationOutput:
         query = """
-        MATCH (p:Person)-[r]->(loc:Location)
-        WHERE toLower(loc.name) CONTAINS toLower($location)
-          AND type(r) IN ['LIVES_IN', 'WORKS_IN', 'STUDIED_IN', 'VISITED']
+        MATCH (p:Person)-[r]->(loc)
+        WHERE type(r) IN ['LIVES_IN', 'WORKS_IN', 'STUDIED_IN', 'VISITED']
+          AND any(label IN labels(loc) WHERE label IN ['Place', 'Location', 'City', 'Region'])
+          AND toLower(coalesce(loc.name, loc.label, loc.id, '')) CONTAINS toLower($location)
           AND coalesce(r.confidence, 0.0) >= $min_confidence
         RETURN p.id AS person_id,
                p.name AS name,
                type(r) AS relationship,
-               coalesce(r.details, {}) AS details,
+               properties(r) AS rel_props,
                coalesce(r.confidence, 0.0) AS confidence,
                coalesce(r.evidence, []) AS evidence
         ORDER BY confidence DESC
@@ -63,15 +64,22 @@ class FindPeopleByLocationTool(ToolBase[FindPeopleByLocationInput, FindPeopleByL
             "limit": input_data.limit,
         }
         rows = run_read_query(self.context, query, params)
-        people = [
-            LocationPersonModel(
-                person_id=row.get("person_id"),
-                name=row.get("name"),
-                relationship=row.get("relationship"),
-                details=row.get("details") or {},
-                confidence=row.get("confidence"),
-                evidence=row.get("evidence") or [],
+        people = []
+        for row in rows:
+            rel_props = row.get("rel_props") or {}
+            details = {
+                key: value
+                for key, value in rel_props.items()
+                if key not in {"factId", "confidence", "evidence", "lastUpdated"}
+            }
+            people.append(
+                LocationPersonModel(
+                    person_id=row.get("person_id"),
+                    name=row.get("name"),
+                    relationship=row.get("relationship"),
+                    details=details,
+                    confidence=row.get("confidence"),
+                    evidence=row.get("evidence") or [],
+                )
             )
-            for row in rows
-        ]
         return FindPeopleByLocationOutput(location=input_data.location, people=people)

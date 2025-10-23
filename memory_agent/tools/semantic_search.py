@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -71,13 +72,18 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         if input_data.fact_types:
             filters = {"fact_type": input_data.fact_types}
 
-        rows = run_vector_query(
-            self.context,
-            self.index_name,
-            embedding,
-            input_data.limit,
-            filters,
-        )
+        try:
+            rows = run_vector_query(
+                self.context,
+                self.index_name,
+                embedding,
+                input_data.limit,
+                filters,
+            )
+        except ToolError as exc:
+            # Missing vector index or similar issues should not fail the entire request.
+            logging.getLogger(__name__).warning("Semantic search unavailable: %s", exc)
+            return SemanticSearchOutput(query=input_data.query, results=[])
         results = []
         for row in rows:
             node = row.get("node")
@@ -87,12 +93,24 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
             if not node:
                 continue
             properties = dict(node)
+            attributes_raw = properties.get("attributes")
+            attributes = {}
+            if isinstance(attributes_raw, str):
+                try:
+                    import json
+
+                    attributes = json.loads(attributes_raw)
+                except json.JSONDecodeError:
+                    attributes = {}
+            elif isinstance(attributes_raw, dict):
+                attributes = attributes_raw
+
             result = SemanticSearchResult(
                 person_id=properties.get("person_id", ""),
                 person_name=properties.get("person_name", properties.get("person_id", "")),
                 fact_type=properties.get("fact_type", ""),
                 fact_object=properties.get("fact_object"),
-                attributes=properties.get("attributes", {}),
+                attributes=attributes,
                 similarity_score=score,
                 confidence=properties.get("confidence"),
                 evidence=properties.get("evidence") or [],

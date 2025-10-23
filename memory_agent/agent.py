@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Iterable
+from typing import Any, Callable, Dict, Iterable
 
 from langgraph.graph import StateGraph, END
 
@@ -16,6 +16,7 @@ from .models import RetrievalRequest, RetrievedFact
 from .normalization import normalize_to_facts
 from .state import AgentState
 from .tools import ToolBase
+from .tools.base import ToolError
 
 
 logger = logging.getLogger(__name__)
@@ -114,59 +115,85 @@ def create_memory_agent_graph(
             "reasoning_trace": update_reasoning(state, f"Set goal: {goal}"),
         }
 
-    def determine_tool_from_goal(state: AgentState) -> dict[str, Any] | None:
+    def determine_tool_from_goal(state: AgentState, preferred_tool: str | None = None) -> dict[str, Any] | None:
         conversation_text = " ".join(msg.content for msg in state["conversation"]).lower()
         identified = state.get("identified_entities", {})
         retrieved = state.get("retrieved_facts", [])
         retrieved_people = {fact.person_id for fact in retrieved}
 
-        # Prioritize explicit person mentions
-        for person_id in identified.get("people_ids", []):
-            if person_id not in retrieved_people and "get_person_profile" in tools:
-                return {"name": "get_person_profile", "input": {"person_id": person_id}}
+        def build_person_profile() -> dict[str, Any] | None:
+            for person_id in identified.get("people_ids", []):
+                if person_id not in retrieved_people:
+                    return {"person_id": person_id}
+            return None
 
-        # Organization queries
-        organizations = identified.get("organizations") or []
-        if organizations and "find_people_by_organization" in tools:
-            return {
-                "name": "find_people_by_organization",
-                "input": {"organization": organizations[0]},
-            }
+        def build_org_query() -> dict[str, Any] | None:
+            organizations = identified.get("organizations") or []
+            if organizations:
+                return {"organization": organizations[0]}
+            return None
 
-        # Skill queries
-        skill = extract_skill(conversation_text)
-        if skill and "find_people_by_skill" in tools:
-            return {"name": "find_people_by_skill", "input": {"skill": skill}}
+        def build_skill_query() -> dict[str, Any] | None:
+            skill = extract_skill(conversation_text)
+            if skill:
+                return {"skill": skill}
+            return None
 
-        # Topic queries
-        topic = extract_topic(conversation_text)
-        if topic and "find_people_by_topic" in tools:
-            return {"name": "find_people_by_topic", "input": {"topic": topic}}
+        def build_topic_query() -> dict[str, Any] | None:
+            topic = extract_topic(conversation_text)
+            if topic:
+                return {"topic": topic}
+            return None
 
-        # Location queries
-        location = extract_location(conversation_text)
-        if location and "find_people_by_location" in tools:
-            return {"name": "find_people_by_location", "input": {"location": location}}
+        def build_location_query() -> dict[str, Any] | None:
+            location = extract_location(conversation_text)
+            if location:
+                return {"location": location}
+            return None
 
-        # Fallback to semantic search
-        if "semantic_search_facts" in tools:
-            return {
-                "name": "semantic_search_facts",
-                "input": {
-                    "query": conversation_text[-500:],
-                    "limit": config.max_facts,
-                },
-            }
+        def build_semantic_search() -> dict[str, Any] | None:
+            if conversation_text:
+                return {"query": conversation_text[-500:], "limit": state.get("max_facts", config.max_facts)}
+            return None
+
+        heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
+            ("get_person_profile", build_person_profile),
+            ("find_people_by_organization", build_org_query),
+            ("find_people_by_skill", build_skill_query),
+            ("find_people_by_topic", build_topic_query),
+            ("find_people_by_location", build_location_query),
+            ("semantic_search_facts", build_semantic_search),
+        ]
+
+        if preferred_tool:
+            for name, builder in heuristics:
+                if name == preferred_tool and name in tools:
+                    payload = builder()
+                    if payload:
+                        return {"name": name, "input": payload}
+                    return None
+            return None
+
+        for name, builder in heuristics:
+            if name not in tools:
+                continue
+            payload = builder()
+            if payload:
+                return {"name": name, "input": payload}
         return None
 
     async def plan_queries(state: AgentState) -> AgentState:
         logger.debug("Planning next query, iteration %s", state.get("iteration"))
         candidate = determine_tool_from_goal(state)
-        if candidate and llm:
+        if candidate and llm and llm.is_available:
             try:
                 chosen = await llm.aplan_tool_usage(state.get("current_goal", ""), list(tools.keys()))
                 if chosen and chosen in tools and chosen != candidate["name"]:
-                    candidate = {"name": chosen, "input": candidate["input"]}
+                    alternate = determine_tool_from_goal(state, preferred_tool=chosen)
+                    if alternate:
+                        candidate = alternate
+                    else:
+                        logger.debug("LLM suggested %s but no inputs were available; keeping %s", chosen, candidate["name"])
             except Exception as exc:  # noqa: BLE001
                 logger.debug("LLM planning failed: %s", exc)
         reasoning_message = (
@@ -191,7 +218,26 @@ def create_memory_agent_graph(
                 "reasoning_trace": update_reasoning(state, f"Tool {tool_name} unavailable."),
             }
         logger.info("Executing tool %s", tool_name)
-        result = tool(tool_input)
+        try:
+            result = tool(tool_input)
+        except ToolError as exc:
+            logger.warning("Tool %s failed: %s", tool_name, exc)
+            tool_calls = list(state.get("tool_calls", []))
+            tool_calls.append(
+                {
+                    "name": tool_name,
+                    "input": tool_input,
+                    "result_count": 0,
+                    "error": str(exc),
+                }
+            )
+            reasoning_msg = f"Tool {tool_name} failed; continuing with fallback."
+            return {
+                "tool_calls": tool_calls,
+                "pending_tool": None,
+                "iteration": state.get("iteration", 0) + 1,
+                "reasoning_trace": update_reasoning(state, reasoning_msg),
+            }
         facts = normalize_to_facts(tool_name, result)
         retrieved = list(state.get("retrieved_facts", []))
         retrieved.extend(facts)
@@ -333,13 +379,40 @@ def extract_topic(text: str) -> str | None:
     return None
 
 
+STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "my",
+    "our",
+    "their",
+    "his",
+    "her",
+    "its",
+    "this",
+    "that",
+    "these",
+    "those",
+    "friend",
+    "friends",
+    "group",
+    "team",
+    "crew",
+    "anyone",
+    "someone",
+}
+
+
 def extract_location(text: str) -> str | None:
     """Detect possible location target."""
-    markers = ["in ", "at ", "from "]
+    markers = [" in ", " at ", " from "]
+    lowered = text.lower()
     for marker in markers:
-        if marker in text:
-            start = text.index(marker) + len(marker)
-            token = text[start:].split()[0]
-            if token:
-                return token.strip("?.!,")
+        if marker in lowered:
+            fragment = lowered.split(marker, 1)[1].strip()
+            if not fragment:
+                continue
+            token = fragment.split()[0].strip("?.!,")
+            if token and token not in STOPWORDS and len(token) > 2:
+                return token
     return None

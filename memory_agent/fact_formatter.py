@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable
 
 from .models import RetrievedFact
 
@@ -41,3 +41,28 @@ def format_fact(fact: RetrievedFact) -> str:
 def format_facts(facts: Iterable[RetrievedFact]) -> list[str]:
     """Format multiple facts into strings."""
     return [format_fact(fact) for fact in facts]
+
+
+def format_fact_for_embedding_text(
+    *,
+    person_name: str,
+    fact_type: str,
+    fact_object: str | None,
+    attributes: dict[str, Any],
+) -> str:
+    """Render a fact into a concise embedding-friendly string."""
+    cleaned_person = person_name or "Unknown person"
+    relation = fact_type.replace("_", " ").lower()
+    components = [cleaned_person, relation]
+    if fact_object:
+        components.append(str(fact_object))
+    base = " ".join(component for component in components if component).strip()
+
+    attribute_items = []
+    for key, value in sorted(attributes.items()):
+        if value in (None, "", []):
+            continue
+        attribute_items.append(f"{key}={value}")
+    if attribute_items:
+        return f"{base}. " + ", ".join(attribute_items)
+    return base

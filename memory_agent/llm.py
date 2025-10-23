@@ -84,6 +84,11 @@ class LLMClient:
             f"Prompt excerpt: {truncated}"
         )
 
+    @property
+    def is_available(self) -> bool:
+        """Return True if an underlying chat model is ready."""
+        return self._chat_model is not None
+
     async def aplan_tool_usage(self, goal: str, options: list[str]) -> str:
         """Return the name of a tool that best matches the current goal."""
         prompt = (
