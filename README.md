@@ -87,6 +87,15 @@ Key endpoints:
 
 Environment variables cover Neo4j credentials, LLM provider/model, embedding settings, iteration limits, and CORS/rate-limiting controls (see `memory_agent/config.py`).
 
+Use a local llama-server instance by exporting:
+
+```bash
+export LLAMA_BASE_URL=http://localhost:8080/v1/chat/completions  # adjust if needed
+export LLAMA_MODEL=GLM-4.5-Air
+```
+
+Additional knobs (`LLAMA_TEMPERATURE`, `LLAMA_TOP_P`, `LLAMA_MAX_TOKENS`, `LLAMA_TIMEOUT`, `LLAMA_API_KEY`) mirror the defaults used elsewhere in the project.
+
 ### Semantic Search Embeddings
 
 For the semantic search tool to return useful results, populate the fact embedding index in Neo4j:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
+
+from ie.client import LlamaServerClient, LlamaServerConfig
 
 
 logger = logging.getLogger(__name__)
@@ -12,68 +15,70 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class LLMClient:
-    """Wrapper around LangChain chat models with graceful degradation."""
+    """Client that routes planning prompts to llama-server with fallback heuristics."""
 
-    provider: str
     model: str
     temperature: float
     api_key: str | None = None
+    base_url: str | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    timeout: float | None = None
 
-    _chat_model: Any | None = None
+    _llama_client: LlamaServerClient | None = None
 
     def __post_init__(self) -> None:
-        if self.api_key:
-            self._initialize_chat_model()
+        self._initialize_client()
 
-    def _initialize_chat_model(self) -> None:
+    def _initialize_client(self) -> None:
         try:
-            if self.provider == "openai":
-                from langchain_openai import ChatOpenAI
-
-                self._chat_model = ChatOpenAI(
-                    model=self.model,
-                    temperature=self.temperature,
-                    api_key=self.api_key,
-                )
-            elif self.provider == "anthropic":
-                from langchain_anthropic import ChatAnthropic
-
-                self._chat_model = ChatAnthropic(
-                    model=self.model,
-                    temperature=self.temperature,
-                    api_key=self.api_key,
-                )
-            else:
-                logger.warning("LLM provider %s is not supported", self.provider)
+            config = LlamaServerConfig(
+                base_url=self.base_url or "http://localhost:8080/v1/chat/completions",
+                model=self.model,
+                timeout=self.timeout or 1200.0,
+                temperature=self.temperature,
+                top_p=self.top_p or 0.95,
+                max_tokens=int(self.max_tokens or 4096),
+                api_key=self.api_key,
+            )
+            self._llama_client = LlamaServerClient(config)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to initialize LLM client: %s", exc)
-            self._chat_model = None
+            self._llama_client = None
 
     async def apredict(self, prompt: str) -> str:
         """Asynchronously generate a response to the prompt."""
-        if self._chat_model is None:
-            return self._fallback(prompt)
-        try:
-            result = await self._chat_model.ainvoke(prompt)
-            if hasattr(result, "content"):
-                return str(result.content)
-            return str(result)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM call failed, falling back: %s", exc)
-            return self._fallback(prompt)
+        if self._llama_client is not None:
+            return await asyncio.to_thread(self._llama_predict, prompt)
+        return self._fallback(prompt)
 
     def predict(self, prompt: str) -> str:
         """Synchronously generate a response."""
-        if self._chat_model is None:
+        if self._llama_client is not None:
+            return self._llama_predict(prompt)
+        return self._fallback(prompt)
+
+    def _llama_predict(self, prompt: str) -> str:
+        if self._llama_client is None:
             return self._fallback(prompt)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You help coordinate which knowledge graph tool should run next. "
+                    "Return only the tool name that best advances the stated goal."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
         try:
-            result = self._chat_model.invoke(prompt)
-            if hasattr(result, "content"):
-                return str(result.content)
-            return str(result)
+            response = self._llama_client.complete(messages)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("LLM call failed, falling back: %s", exc)
+            logger.warning("Llama call failed, falling back: %s", exc)
             return self._fallback(prompt)
+        if response is None:
+            return self._fallback(prompt)
+        return response
 
     def _fallback(self, prompt: str) -> str:
         """Fallback heuristic when no LLM provider is configured."""
@@ -87,7 +92,7 @@ class LLMClient:
     @property
     def is_available(self) -> bool:
         """Return True if an underlying chat model is ready."""
-        return self._chat_model is not None
+        return self._llama_client is not None
 
     async def aplan_tool_usage(self, goal: str, options: list[str]) -> str:
         """Return the name of a tool that best matches the current goal."""

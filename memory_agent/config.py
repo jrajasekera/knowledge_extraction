@@ -28,10 +28,13 @@ class Neo4jConfig:
 class LLMConfig:
     """Configuration for the backing LLM provider."""
 
-    provider: Literal["openai", "anthropic"]
     model: str
     temperature: float = 0.3
     api_key: str | None = None
+    base_url: str | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    timeout: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,22 +113,22 @@ class Settings:
             encrypted=cls._bool_env("NEO4J_ENCRYPTED", False),
         )
 
-        llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
-        if llm_provider not in {"openai", "anthropic"}:
-            msg = f"Unsupported LLM provider: {llm_provider}"
-            raise ValueError(msg)
+        model = os.getenv("LLAMA_MODEL", "GLM-4.5-Air")
+        temperature = float(os.getenv("LLAMA_TEMPERATURE", os.getenv("LLM_TEMPERATURE", "0.3")))
+        api_key = os.getenv("LLAMA_API_KEY")
+        base_url = os.getenv("LLAMA_BASE_URL", "http://localhost:8080/v1/chat/completions")
+        top_p = float(os.getenv("LLAMA_TOP_P", "0.95"))
+        max_tokens = int(os.getenv("LLAMA_MAX_TOKENS", "4096"))
+        timeout = float(os.getenv("LLAMA_TIMEOUT", "1200"))
 
         llm = LLMConfig(
-            provider=llm_provider,  # type: ignore[arg-type]
-            model=os.getenv(
-                "LLM_MODEL",
-                os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
-                if llm_provider == "openai"
-                else os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
-            ),
-            temperature=float(os.getenv("LLM_TEMPERATURE", os.getenv("OPENAI_TEMPERATURE", "0.3"))),
-            api_key=os.getenv("LLM_API_KEY")
-            or (os.getenv("OPENAI_API_KEY") if llm_provider == "openai" else os.getenv("ANTHROPIC_API_KEY")),
+            model=model,
+            temperature=temperature,
+            api_key=api_key,
+            base_url=base_url,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            timeout=timeout,
         )
 
         embeddings = EmbeddingConfig(

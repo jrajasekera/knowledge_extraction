@@ -88,10 +88,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tool_context = ToolContext(driver=driver, embeddings_model=embedding_provider)
         toolkit = build_toolkit(tool_context)
         llm_client = LLMClient(
-            provider=cfg.llm.provider,
             model=cfg.llm.model,
             temperature=cfg.llm.temperature,
             api_key=cfg.llm.api_key,
+            base_url=cfg.llm.base_url,
+            top_p=cfg.llm.top_p,
+            max_tokens=cfg.llm.max_tokens,
+            timeout=cfg.llm.timeout,
         )
         agent = MemoryAgent(toolkit, cfg.agent, llm=llm_client)
         app.state.embedding_provider = embedding_provider

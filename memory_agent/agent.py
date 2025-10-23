@@ -20,6 +20,12 @@ from .tools.base import ToolError
 
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    logger.addHandler(handler)
+logger.propagate = False
 
 
 class MemoryAgent:
@@ -107,6 +113,8 @@ def create_memory_agent_graph(
             "organizations": [org for org in insights.organizations if org],
             "topics": [topic for topic in insights.topics if topic],
         }
+        logger.debug("Identified entities: %s", identified)
+        logger.debug("Initial goal: %s", goal)
         return {
             "identified_entities": identified,
             "current_goal": goal,
@@ -165,12 +173,33 @@ def create_memory_agent_graph(
             ("semantic_search_facts", build_semantic_search),
         ]
 
+        def fallback_payload(tool_name: str) -> dict[str, Any] | None:
+            goal_text = state.get("current_goal") or conversation_text
+            if not goal_text:
+                return None
+            if tool_name == "find_people_by_topic":
+                return {"topic": goal_text}
+            if tool_name == "find_people_by_skill":
+                return {"skill": goal_text}
+            if tool_name == "find_people_by_location":
+                return {"location": goal_text}
+            if tool_name == "find_people_by_organization":
+                return {"organization": goal_text}
+            if tool_name == "semantic_search_facts":
+                return {"query": goal_text, "limit": state.get("max_facts", config.max_facts)}
+            return None
+
         if preferred_tool:
             for name, builder in heuristics:
                 if name == preferred_tool and name in tools:
                     payload = builder()
+                    if not payload:
+                        payload = fallback_payload(name)
+                        if payload:
+                            logger.debug("Using fallback payload for LLM-selected tool %s: %s", name, payload)
                     if payload:
                         return {"name": name, "input": payload}
+                    logger.debug("No payload available for LLM-selected tool %s", name)
                     return None
             return None
 
@@ -179,6 +208,7 @@ def create_memory_agent_graph(
                 continue
             payload = builder()
             if payload:
+                logger.debug("Heuristic selected tool %s with payload %s", name, payload)
                 return {"name": name, "input": payload}
         return None
 
@@ -188,10 +218,12 @@ def create_memory_agent_graph(
         if candidate and llm and llm.is_available:
             try:
                 chosen = await llm.aplan_tool_usage(state.get("current_goal", ""), list(tools.keys()))
+                logger.debug("LLM suggested tool %s while heuristic chose %s", chosen, candidate["name"])
                 if chosen and chosen in tools and chosen != candidate["name"]:
                     alternate = determine_tool_from_goal(state, preferred_tool=chosen)
                     if alternate:
                         candidate = alternate
+                        logger.debug("Using LLM-selected tool %s with payload %s", alternate["name"], alternate["input"])
                     else:
                         logger.debug("LLM suggested %s but no inputs were available; keeping %s", chosen, candidate["name"])
             except Exception as exc:  # noqa: BLE001
@@ -217,7 +249,7 @@ def create_memory_agent_graph(
                 "pending_tool": None,
                 "reasoning_trace": update_reasoning(state, f"Tool {tool_name} unavailable."),
             }
-        logger.info("Executing tool %s", tool_name)
+        logger.info("Executing tool %s with input %s", tool_name, tool_input)
         try:
             result = tool(tool_input)
         except ToolError as exc:
@@ -239,6 +271,7 @@ def create_memory_agent_graph(
                 "reasoning_trace": update_reasoning(state, reasoning_msg),
             }
         facts = normalize_to_facts(tool_name, result)
+        logger.debug("Tool %s returned %d facts", tool_name, len(facts))
         retrieved = list(state.get("retrieved_facts", []))
         retrieved.extend(facts)
         tool_calls = list(state.get("tool_calls", []))
@@ -269,6 +302,7 @@ def create_memory_agent_graph(
             if goal_accomplished
             else "Goal not yet satisfied."
         )
+        logger.debug("Goal accomplished: %s after tool call %s", goal_accomplished, calls[-1] if calls else None)
         return {
             "goal_accomplished": goal_accomplished,
             "reasoning_trace": update_reasoning(state, reasoning_msg),
@@ -278,6 +312,11 @@ def create_memory_agent_graph(
         facts = deduplicate_facts(state.get("retrieved_facts", []))
         formatted = format_facts(facts)
         confidence = compute_confidence(facts, state)
+        logger.info(
+            "Synthesis produced %d formatted facts (confidence=%s)",
+            len(formatted),
+            confidence,
+        )
         reasoning_msg = f"Synthesized {len(formatted)} facts with confidence {confidence}."
         return {
             "formatted_facts": formatted[: state.get("max_facts", config.max_facts)],
