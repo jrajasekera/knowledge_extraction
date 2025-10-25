@@ -9,9 +9,12 @@ from .models import RetrievedFact
 
 def deduplicate_facts(facts: Iterable[RetrievedFact]) -> list[RetrievedFact]:
     """Remove duplicate facts by person, type, and object."""
-    unique: dict[tuple[str, str, str | None], RetrievedFact] = {}
+    unique: dict[tuple[str, str, str | None, str | None], RetrievedFact] = {}
     for fact in facts:
-        key = (fact.person_id, fact.fact_type, fact.fact_object)
+        relationship_type = None
+        if isinstance(fact.attributes, dict):
+            relationship_type = str(fact.attributes.get("relationship_type")) if fact.attributes.get("relationship_type") else None
+        key = (fact.person_id, fact.fact_type, fact.fact_object, relationship_type)
         existing = unique.get(key)
         if existing is None:
             unique[key] = fact

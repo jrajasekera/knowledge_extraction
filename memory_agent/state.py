@@ -37,3 +37,10 @@ class AgentState(TypedDict, total=False):
     confidence: str
     metadata: dict[str, Any]
     reasoning_trace: list[str]
+
+    # Enhanced LLM integration
+    llm_reasoning: list[dict[str, Any]]
+    tool_selection_confidence: str
+    fact_assessments: dict[str, dict[str, Any]]
+    entity_extraction_results: dict[str, Any]
+    should_stop_evaluation: dict[str, Any]

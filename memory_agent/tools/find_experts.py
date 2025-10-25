@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -89,7 +90,22 @@ class FindExpertsTool(ToolBase[FindExpertsInput, FindExpertsOutput]):
                 properties.get("fact_type", ""),
                 properties.get("fact_object") or "",
             ]
-            attributes = properties.get("attributes") or {}
+            raw_attributes = properties.get("attributes")
+            attributes: dict[str, Any] = {}
+            if isinstance(raw_attributes, dict):
+                attributes = raw_attributes
+            elif isinstance(raw_attributes, str):
+                try:
+                    parsed = json.loads(raw_attributes)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    attributes = parsed
+                elif raw_attributes.strip():
+                    description_parts.append(raw_attributes.strip())
+            elif raw_attributes is not None:
+                # Neo4j lists arrive as list[Any]; convert to keyless description text.
+                description_parts.append(str(raw_attributes))
             if attributes:
                 description_parts.append(", ".join(f"{k}={v}" for k, v in attributes.items()))
             description = " ".join(part for part in description_parts if part).strip()

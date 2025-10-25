@@ -65,6 +65,11 @@ class MemoryAgent:
             "confidence": "low",
             "metadata": {},
             "reasoning_trace": [],
+            "llm_reasoning": [],
+            "tool_selection_confidence": "low",
+            "fact_assessments": {},
+            "entity_extraction_results": {},
+            "should_stop_evaluation": {},
         }
         final_state: AgentState = await self.graph.ainvoke(initial_state)
         processing_time_ms = int((time.perf_counter() - start) * 1000)
@@ -104,23 +109,56 @@ def create_memory_agent_graph(
         trace.append(message)
         return trace
 
-    def analyze_conversation(state: AgentState) -> AgentState:
+    def fact_key(fact: RetrievedFact) -> str:
+        return f"{fact.person_id}|{fact.fact_type}|{fact.fact_object or ''}"
+
+    async def analyze_conversation(state: AgentState) -> AgentState:
         logger.debug("Analyzing conversation for channel %s", state.get("channel_id"))
         insights = extract_insights(state["conversation"])
         goal = insights.questions[0] if insights.questions else "Collect relevant context."
+        llm_entities: dict[str, Any] = {}
+        if llm and llm.is_available:
+            try:
+                llm_entities = await llm.extract_entities_from_conversation(state["conversation"])
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("LLM entity extraction failed: %s", exc)
+
+        people_ids = set(insights.people)
+        organizations = set(filter(None, insights.organizations))
+        topics = set(filter(None, insights.topics))
+
+        if llm_entities:
+            organizations.update(
+                entity for entity in llm_entities.get("organizations", []) if isinstance(entity, str) and entity
+            )
+            topics.update(
+                entity for entity in llm_entities.get("topics", []) if isinstance(entity, str) and entity
+            )
+
         identified = {
-            "people_ids": list(insights.people),
-            "organizations": [org for org in insights.organizations if org],
-            "topics": [topic for topic in insights.topics if topic],
+            "people_ids": list(people_ids),
+            "organizations": [org for org in organizations if org],
+            "topics": [topic for topic in topics if topic],
         }
+        if llm_entities.get("people"):
+            identified["people_mentions"] = llm_entities["people"]
+        if llm_entities.get("locations"):
+            identified["locations"] = llm_entities["locations"]
+        if llm_entities.get("skills"):
+            identified["skills"] = llm_entities["skills"]
+
         logger.debug("Identified entities: %s", identified)
         logger.debug("Initial goal: %s", goal)
+        trace = update_reasoning(state, f"Set goal: {goal}")
+        if llm_entities:
+            trace = update_reasoning({"reasoning_trace": trace}, "Captured entities via LLM analysis")
         return {
             "identified_entities": identified,
             "current_goal": goal,
             "retrieved_facts": list(state.get("retrieved_facts", [])),
             "tool_calls": list(state.get("tool_calls", [])),
-            "reasoning_trace": update_reasoning(state, f"Set goal: {goal}"),
+            "reasoning_trace": trace,
+            "entity_extraction_results": llm_entities,
         }
 
     def determine_tool_from_goal(state: AgentState, preferred_tool: str | None = None) -> dict[str, Any] | None:
@@ -148,6 +186,9 @@ def create_memory_agent_graph(
             return None
 
         def build_topic_query() -> dict[str, Any] | None:
+            topics = identified.get("topics") or []
+            if topics:
+                return {"topic": topics[0]}
             topic = extract_topic(conversation_text)
             if topic:
                 return {"topic": topic}
@@ -164,6 +205,12 @@ def create_memory_agent_graph(
                 return {"query": conversation_text[-500:], "limit": state.get("max_facts", config.max_facts)}
             return None
 
+        def build_conversation_participants() -> dict[str, Any] | None:
+            messages = state.get("conversation", [])
+            if messages:
+                return {"messages": messages}
+            return None
+
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
             ("get_person_profile", build_person_profile),
             ("find_people_by_organization", build_org_query),
@@ -171,12 +218,15 @@ def create_memory_agent_graph(
             ("find_people_by_topic", build_topic_query),
             ("find_people_by_location", build_location_query),
             ("semantic_search_facts", build_semantic_search),
+            ("get_conversation_participants", build_conversation_participants),
         ]
 
         def fallback_payload(tool_name: str) -> dict[str, Any] | None:
             goal_text = state.get("current_goal") or conversation_text
             if not goal_text:
                 return None
+            if tool_name == "get_conversation_participants":
+                return {"messages": state.get("conversation", [])}
             if tool_name == "find_people_by_topic":
                 return {"topic": goal_text}
             if tool_name == "find_people_by_skill":
@@ -214,26 +264,91 @@ def create_memory_agent_graph(
 
     async def plan_queries(state: AgentState) -> AgentState:
         logger.debug("Planning next query, iteration %s", state.get("iteration"))
+        llm_reasoning_updates = list(state.get("llm_reasoning", []))
         candidate = determine_tool_from_goal(state)
-        if candidate and llm and llm.is_available:
+        if llm and llm.is_available:
             try:
-                chosen = await llm.aplan_tool_usage(state.get("current_goal", ""), list(tools.keys()))
-                logger.debug("LLM suggested tool %s while heuristic chose %s", chosen, candidate["name"])
-                if chosen and chosen in tools and chosen != candidate["name"]:
-                    alternate = determine_tool_from_goal(state, preferred_tool=chosen)
-                    if alternate:
-                        candidate = alternate
-                        logger.debug("Using LLM-selected tool %s with payload %s", alternate["name"], alternate["input"])
-                    else:
-                        logger.debug("LLM suggested %s but no inputs were available; keeping %s", chosen, candidate["name"])
+                goal = state.get("current_goal", "")
+                llm_result = await llm.aplan_tool_usage(goal, tools, state, candidate)
+                llm_reasoning_updates.append(
+                    {
+                        "iteration": state.get("iteration", 0),
+                        "decision": llm_result,
+                        "timestamp": time.time(),
+                    }
+                )
+
+                if llm_result.get("should_stop"):
+                    stop_reason = llm_result.get("stop_reason") or llm_result.get("reasoning")
+                    logger.debug("LLM recommended stopping: %s", stop_reason)
+                    return {
+                        "pending_tool": None,
+                        "goal_accomplished": True,
+                        "llm_reasoning": llm_reasoning_updates,
+                        "tool_selection_confidence": llm_result.get("confidence", "low"),
+                        "reasoning_trace": update_reasoning(
+                            state,
+                            f"LLM suggests stopping: {stop_reason}",
+                        ),
+                    }
+
+                tool_name = llm_result.get("tool_name")
+                if tool_name and tool_name in tools:
+                    parameters = llm_result.get("parameters") or {}
+                    if not parameters:
+                        alternate = determine_tool_from_goal(state, preferred_tool=tool_name)
+                        if alternate:
+                            parameters = alternate.get("input", {})
+                        elif tool_name == "get_conversation_participants":
+                            parameters = {"messages": state.get("conversation", [])}
+                    if tool_name == "get_conversation_participants" and "messages" not in parameters:
+                        parameters["messages"] = state.get("conversation", [])
+
+                    should_refine = any(
+                        call.get("name") == tool_name and call.get("result_count", 0) == 0
+                        for call in state.get("tool_calls", [])
+                    )
+                    if should_refine:
+                        conversation_context = "\n".join(
+                            f"{message.author_name}: {message.content}"
+                            for message in state.get("conversation", [])[-5:]
+                        )
+                        try:
+                            refinement = await llm.refine_tool_parameters(
+                                tool_name,
+                                parameters,
+                                conversation_context,
+                                [call for call in state.get("tool_calls", []) if call.get("name") == tool_name],
+                            )
+                            refined_parameters = refinement.get("refined_parameters")
+                            if isinstance(refined_parameters, dict) and refined_parameters:
+                                parameters.update(refined_parameters)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug("Tool parameter refinement failed: %s", exc)
+
+                    candidate = {"name": tool_name, "input": parameters}
+                    reasoning_msg = (
+                        f"LLM selected {tool_name} (confidence: {llm_result.get('confidence', 'low')}): "
+                        f"{llm_result.get('reasoning', '')}"
+                    )
+                    return {
+                        "pending_tool": candidate,
+                        "tool_selection_confidence": llm_result.get("confidence", "low"),
+                        "llm_reasoning": llm_reasoning_updates,
+                        "reasoning_trace": update_reasoning(state, reasoning_msg),
+                    }
+
             except Exception as exc:  # noqa: BLE001
                 logger.debug("LLM planning failed: %s", exc)
+
         reasoning_message = (
             f"Planned tool {candidate['name']}" if candidate else "No further tool required."
         )
         return {
             "pending_tool": candidate,
+            "llm_reasoning": llm_reasoning_updates,
             "reasoning_trace": update_reasoning(state, reasoning_message),
+            "tool_selection_confidence": "low" if candidate else state.get("tool_selection_confidence", "low"),
         }
 
     def execute_tool(state: AgentState) -> AgentState:
@@ -250,6 +365,7 @@ def create_memory_agent_graph(
                 "reasoning_trace": update_reasoning(state, f"Tool {tool_name} unavailable."),
             }
         logger.info("Executing tool %s with input %s", tool_name, tool_input)
+        start = time.perf_counter()
         try:
             result = tool(tool_input)
         except ToolError as exc:
@@ -261,6 +377,9 @@ def create_memory_agent_graph(
                     "input": tool_input,
                     "result_count": 0,
                     "error": str(exc),
+                    "success": False,
+                    "duration_ms": int((time.perf_counter() - start) * 1000),
+                    "timestamp": time.time(),
                 }
             )
             reasoning_msg = f"Tool {tool_name} failed; continuing with fallback."
@@ -272,17 +391,24 @@ def create_memory_agent_graph(
             }
         facts = normalize_to_facts(tool_name, result)
         logger.debug("Tool %s returned %d facts", tool_name, len(facts))
+
+        meaningful_facts = [fact for fact in facts if fact.fact_type != "CONVERSATION_MENTION"]
+
         retrieved = list(state.get("retrieved_facts", []))
-        retrieved.extend(facts)
+        retrieved.extend(meaningful_facts)
         tool_calls = list(state.get("tool_calls", []))
+        duration_ms = int((time.perf_counter() - start) * 1000)
         tool_calls.append(
             {
                 "name": tool_name,
                 "input": tool_input,
-                "result_count": len(facts),
+                "result_count": len(meaningful_facts),
+                "success": len(meaningful_facts) > 0,
+                "duration_ms": duration_ms,
+                "timestamp": time.time(),
             }
         )
-        reasoning_msg = f"Tool {tool_name} returned {len(facts)} facts."
+        reasoning_msg = f"Tool {tool_name} returned {len(meaningful_facts)} actionable facts." if facts else f"Tool {tool_name} returned 0 facts."
         return {
             "retrieved_facts": retrieved,
             "tool_calls": tool_calls,
@@ -291,37 +417,102 @@ def create_memory_agent_graph(
             "reasoning_trace": update_reasoning(state, reasoning_msg),
         }
 
-    def evaluate_progress(state: AgentState) -> AgentState:
+    async def evaluate_progress(state: AgentState) -> AgentState:
         calls = state.get("tool_calls", [])
         goal_accomplished = False
         if calls:
             last = calls[-1]
             goal_accomplished = last.get("result_count", 0) > 0
+        stop_decision: dict[str, Any] = state.get("should_stop_evaluation", {})
+        if llm and llm.is_available:
+            try:
+                stop_decision = await llm.should_continue_searching(
+                    state.get("current_goal", ""),
+                    state.get("retrieved_facts", []),
+                    calls,
+                    state.get("max_iterations", 1),
+                    state.get("iteration", 0),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("LLM stop evaluation failed: %s", exc)
+        if stop_decision and stop_decision.get("should_continue") is False:
+            goal_accomplished = True
         reasoning_msg = (
             "Goal satisfied with new facts."
             if goal_accomplished
             else "Goal not yet satisfied."
         )
-        logger.debug("Goal accomplished: %s after tool call %s", goal_accomplished, calls[-1] if calls else None)
+        trace = update_reasoning(state, reasoning_msg)
+        if stop_decision and stop_decision.get("should_continue") is False:
+            trace = update_reasoning({"reasoning_trace": trace}, f"LLM advised stopping: {stop_decision.get('reasoning', 'no reasoning provided')}")
+        logger.debug(
+            "Goal accomplished: %s after tool call %s",
+            goal_accomplished,
+            calls[-1] if calls else None,
+        )
         return {
             "goal_accomplished": goal_accomplished,
-            "reasoning_trace": update_reasoning(state, reasoning_msg),
+            "reasoning_trace": trace,
+            "should_stop_evaluation": stop_decision,
         }
 
-    def synthesize(state: AgentState) -> AgentState:
+    async def synthesize(state: AgentState) -> AgentState:
         facts = deduplicate_facts(state.get("retrieved_facts", []))
-        formatted = format_facts(facts)
-        confidence = compute_confidence(facts, state)
+        fact_assessments = dict(state.get("fact_assessments", {}))
+        new_facts: list[tuple[str, RetrievedFact]] = []
+        for fact in facts:
+            key = fact_key(fact)
+            if key not in fact_assessments:
+                new_facts.append((key, fact))
+
+        if new_facts and llm and llm.is_available:
+            conversation_context = "\n".join(
+                f"{message.author_name}: {message.content}"
+                for message in state.get("conversation", [])[-5:]
+            )
+            try:
+                assessments = await llm.batch_assess_facts([fact for _, fact in new_facts], conversation_context)
+                for (key, _fact), assessment in zip(new_facts, assessments, strict=False):
+                    fact_assessments[key] = assessment
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("LLM fact assessment failed: %s", exc)
+
+        filtered_facts: list[RetrievedFact] = []
+        for fact in facts:
+            assessment = fact_assessments.get(fact_key(fact))
+            if assessment:
+                relevance = assessment.get("relevance_score")
+                reliability = assessment.get("reliability_score")
+                should_include = assessment.get("should_include")
+                if isinstance(should_include, bool) and should_include is False:
+                    relevance_ok = relevance is not None and float(relevance) >= 0.4
+                    reliability_ok = reliability is not None and float(reliability) >= 0.4
+                    if not relevance_ok and not reliability_ok:
+                        continue
+                # surface assessment metadata for downstream formatting/debugging
+                fact.attributes = dict(fact.attributes)
+                fact.attributes.setdefault("assessment", {})
+                for key in ("relevance_score", "reliability_score", "should_include", "caveats"):
+                    if key in assessment:
+                        fact.attributes["assessment"][key] = assessment[key]
+            filtered_facts.append(fact)
+
+        formatted = format_facts(filtered_facts)
+        updated_state = dict(state)
+        updated_state["fact_assessments"] = fact_assessments
+        confidence = compute_confidence(filtered_facts, updated_state)
         logger.info(
             "Synthesis produced %d formatted facts (confidence=%s)",
             len(formatted),
             confidence,
         )
         reasoning_msg = f"Synthesized {len(formatted)} facts with confidence {confidence}."
+        trace = update_reasoning(state, reasoning_msg)
         return {
             "formatted_facts": formatted[: state.get("max_facts", config.max_facts)],
             "confidence": confidence,
-            "reasoning_trace": update_reasoning(state, reasoning_msg),
+            "reasoning_trace": trace,
+            "fact_assessments": fact_assessments,
         }
 
     workflow.add_node("analyze_conversation", analyze_conversation)
@@ -350,6 +541,9 @@ def should_continue(state: AgentState) -> str:
         return "finish"
     if len(state.get("retrieved_facts", [])) >= state.get("max_facts", 1):
         return "finish"
+    stop_decision = state.get("should_stop_evaluation", {})
+    if stop_decision and stop_decision.get("should_continue") is False:
+        return "finish"
     if not state.get("pending_tool"):
         return "finish"
     return "continue"
@@ -362,6 +556,9 @@ def evaluate_next_step(state: AgentState) -> str:
     if len(state.get("retrieved_facts", [])) >= state.get("max_facts", 1):
         return "finish"
     if detect_tool_loop(state.get("tool_calls", [])):
+        return "finish"
+    stop_decision = state.get("should_stop_evaluation", {})
+    if stop_decision and stop_decision.get("should_continue") is False:
         return "finish"
     if not state.get("goal_accomplished"):
         return "continue"
@@ -385,11 +582,29 @@ def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
     if not facts:
         return "low"
     confidences = [fact.confidence for fact in facts if fact.confidence is not None]
+    avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
     high_conf = sum(1 for value in confidences if value >= 0.8)
-    if high_conf >= 3 or len(facts) >= 5:
-        return "high"
-    if high_conf >= 1 or len(facts) >= 2:
-        return "medium"
+
+    tool_calls = state.get("tool_calls", []) or []
+    success_count = sum(1 for call in tool_calls if call.get("success"))
+    success_rate = success_count / len(tool_calls) if tool_calls else 0.0
+
+    assessments = state.get("fact_assessments", {}) or {}
+    relevance_scores: list[float] = []
+    for assessment in assessments.values():
+        if not assessment or assessment.get("should_include") is False:
+            continue
+        score = assessment.get("relevance_score")
+        if isinstance(score, (int, float)):
+            relevance_scores.append(float(score))
+    avg_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else None
+
+    if success_rate >= 0.7 and (high_conf >= 3 or len(facts) >= 5):
+        if avg_relevance is None or avg_relevance >= 0.7:
+            return "high"
+    if success_rate >= 0.4 and (high_conf >= 1 or len(facts) >= 2 or avg_confidence >= 0.6):
+        if avg_relevance is None or avg_relevance >= 0.5:
+            return "medium"
     return "low"
 
 

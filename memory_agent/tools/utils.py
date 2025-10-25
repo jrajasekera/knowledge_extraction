@@ -41,23 +41,44 @@ def run_vector_query(
     limit: int,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute a vector index query."""
+    """Execute a vector index query, applying optional filters client-side."""
     parameters: dict[str, Any] = {
         "index_name": index_name,
         "limit": limit,
         "embedding": embedding,
     }
-    if filters:
-        parameters["filters"] = filters
-        query = """
-        CALL db.index.vector.queryNodes($index_name, $limit, $embedding, $filters)
-        YIELD node, score
-        RETURN node, score
-        """
-    else:
-        query = """
-        CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
-        YIELD node, score
-        RETURN node, score
-        """
-    return run_read_query(context, query, parameters)
+    query = """
+    CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+    YIELD node, score
+    RETURN node, score
+    """
+    rows = run_read_query(context, query, parameters)
+    if not filters:
+        return rows
+
+    filtered_rows: list[dict[str, Any]] = []
+    for row in rows:
+        node = row.get("node")
+        if node is None:
+            continue
+        properties = dict(node)
+        match = True
+        for key, expected in filters.items():
+            value = properties.get(key)
+            if isinstance(expected, (list, tuple, set)):
+                expected_set = set(expected)
+                if isinstance(value, (list, tuple, set)):
+                    if not expected_set.intersection(value):
+                        match = False
+                        break
+                else:
+                    if value not in expected_set:
+                        match = False
+                        break
+            else:
+                if value != expected:
+                    match = False
+                    break
+        if match:
+            filtered_rows.append(row)
+    return filtered_rows
