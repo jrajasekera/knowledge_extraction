@@ -98,12 +98,6 @@ def _build_tool_catalog(self, available_tools: dict[str, ToolBase]) -> str:
             "inputs": "messages (provided automatically)",
             "example": "When conversation has ambiguous references like 'my brother' or unclear @mentions"
         },
-        "find_experts": {
-            "description": "Finds people best suited to answer a specific question using semantic search",
-            "use_when": "User asks a complex question that needs expert matching",
-            "inputs": "query (required), limit (optional)",
-            "example": "When asked 'Who can help me debug Kubernetes networking?' (uses semantic similarity)"
-        },
         "semantic_search_facts": {
             "description": "Searches for facts semantically similar to a natural language query",
             "use_when": "No specific tool matches or need broad exploratory search",
@@ -277,8 +271,8 @@ Reasoning: "Already tried find_people_by_skill with no results. No Python expert
 
 ### Example 4: Broad Question
 Goal: "Who can help with distributed systems design?"
-Best Choice: find_experts (query='distributed systems design expertise')
-Reasoning: "Complex question requiring semantic matching. find_experts uses embeddings for nuanced queries."
+Best Choice: semantic_search_facts (query='distributed systems design expertise')
+Reasoning: "No specific skill or org is mentioned, so semantic_search_facts can surface related experience across fact types."
 
 Now analyze the current situation and select the best tool:"""
 

@@ -254,45 +254,6 @@ def _normalize_conversation_participants(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_find_experts(output) -> list[RetrievedFact]:
-    facts: list[RetrievedFact] = []
-    for expert in output.experts:
-        base_attributes = {
-            "relevance_score": expert.relevance_score,
-        }
-        if not expert.relevant_facts:
-            facts.append(
-                _build_fact(
-                    person_id=expert.person_id,
-                    person_name=expert.name,
-                    fact_type="EXPERT_RECOMMENDATION",
-                    fact_object=output.query,
-                    attributes=base_attributes,
-                    confidence=None,
-                    evidence=[],
-                )
-            )
-            continue
-
-        for supporting_fact in expert.relevant_facts:
-            attributes = dict(base_attributes)
-            attributes["description"] = supporting_fact.description
-            if supporting_fact.confidence is not None:
-                attributes["support_confidence"] = supporting_fact.confidence
-            facts.append(
-                _build_fact(
-                    person_id=expert.person_id,
-                    person_name=expert.name,
-                    fact_type=supporting_fact.type or "EXPERTISE_MATCH",
-                    fact_object=output.query,
-                    attributes=attributes,
-                    confidence=supporting_fact.confidence,
-                    evidence=[],
-                )
-            )
-    return facts
-
-
 TOOL_NORMALIZERS = {
     "get_person_profile": _normalize_person_profile,
     "find_people_by_skill": _normalize_people_by_skill,
@@ -302,5 +263,4 @@ TOOL_NORMALIZERS = {
     "find_people_by_location": _normalize_people_by_location,
     "semantic_search_facts": _normalize_semantic_search,
     "get_conversation_participants": _normalize_conversation_participants,
-    "find_experts": _normalize_find_experts,
 }

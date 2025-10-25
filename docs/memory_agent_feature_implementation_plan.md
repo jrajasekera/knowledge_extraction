@@ -135,7 +135,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 **Implementation Notes:**
 - Query: `MATCH (p:Person)-[r:HAS_SKILL]->(s:Skill) WHERE toLower(s.name) = toLower($skill)`
 - Order by confidence DESC
-- Apply semantic search if exact match fails (see Tool 10)
+- Apply semantic search if exact match fails (see Tool 9)
 
 ---
 
@@ -372,46 +372,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 
 ---
 
-#### Tool 9: `find_experts`
-**Purpose**: Find people best suited to answer a question or provide guidance
-
-**Input:**
-```python
-{
-    "query": str,  # Free-text query about what expertise is needed
-    "limit": int = 5
-}
-```
-
-**Output:**
-```python
-{
-    "query": str,
-    "experts": [
-        {
-            "person_id": str,
-            "name": str,
-            "relevance_score": float,
-            "relevant_facts": [
-                {
-                    "type": str,
-                    "description": str,
-                    "confidence": float
-                }
-            ]
-        }
-    ]
-}
-```
-
-**Implementation Notes:**
-- Use semantic search to find relevant skills, topics, organizations
-- Aggregate evidence across multiple fact types
-- Weight recent facts higher than old ones
-
----
-
-#### Tool 10: `semantic_search_facts`
+#### Tool 9: `semantic_search_facts`
 **Purpose**: Find facts semantically similar to a query
 
 **Input:**

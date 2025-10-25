@@ -84,12 +84,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "messages (provided automatically)",
         "example": "Use at the beginning when the conversation references 'he' or 'my brother'.",
     },
-    "find_experts": {
-        "description": "Find best-suited people for a free-form query by aggregating relevant facts.",
-        "use_when": "The goal is broad or advisory and requires expert recommendations.",
-        "inputs": "query (required), limit (optional)",
-        "example": "Use when asked 'Who can help with distributed systems design?'",
-    },
     "semantic_search_facts": {
         "description": "Perform semantic search across all fact embeddings for flexible matching.",
         "use_when": "Other tools are not specific enough or previous targeted queries returned nothing.",
