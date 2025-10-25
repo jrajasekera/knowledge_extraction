@@ -36,12 +36,6 @@ llm_latency_seconds = Histogram(
 )
 
 TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
-    "get_person_profile": {
-        "description": "Retrieve all known facts about a specific person by Discord ID.",
-        "use_when": "The goal references a particular person or tagged user whose profile should be reviewed.",
-        "inputs": "person_id (required), fact_types (optional)",
-        "example": "Use when the user says 'What do we know about Alice?'",
-    },
     "get_relationships_between": {
         "description": "Show relationships and shared contexts between two people.",
         "use_when": "The goal compares or connects two specific people.",
@@ -516,9 +510,8 @@ class LLMClient:
             "}\n\n"
             "If you decide no tool should run, set should_stop to true and explain why in stop_reason.\n\n"
             "### Examples\n"
-            "1. Goal: 'Tell me about Alice's background' -> get_person_profile\n"
-            "2. Goal: 'Goal already answered' -> should_stop true\n"
-            "3. Goal: 'Who is based in New York?' -> find_people_by_location\n\n"
+            "1. Goal: 'Goal already answered' -> should_stop true\n"
+            "2. Goal: 'Who is based in New York?' -> find_people_by_location\n\n"
             "Respond now with JSON only."
         )
         return prompt
@@ -622,17 +615,6 @@ class LLMClient:
 
         goal_text = self._goal_text(state, state.get("current_goal", ""))
         conversation_text = " ".join(msg.content for msg in state.get("conversation", []))
-
-        people = state.get("identified_entities", {}).get("people_ids", [])
-        if people and "get_person_profile" in available_tools:
-            return {
-                "tool_name": "get_person_profile",
-                "parameters": {"person_id": people[0]},
-                "reasoning": "Fallback heuristic identified a person reference.",
-                "confidence": "medium",
-                "should_stop": False,
-                "stop_reason": None,
-            }
 
         if "semantic_search_facts" in available_tools:
             return {

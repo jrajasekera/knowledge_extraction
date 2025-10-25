@@ -170,12 +170,6 @@ def create_memory_agent_graph(
         retrieved = state.get("retrieved_facts", [])
         retrieved_people = {fact.person_id for fact in retrieved}
 
-        def build_person_profile() -> dict[str, Any] | None:
-            for person_id in identified.get("people_ids", []):
-                if person_id not in retrieved_people:
-                    return {"person_id": person_id}
-            return None
-
         def build_topic_query() -> dict[str, Any] | None:
             topics = identified.get("topics") or []
             if topics:
@@ -197,7 +191,6 @@ def create_memory_agent_graph(
             return None
 
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
-            ("get_person_profile", build_person_profile),
             ("find_people_by_topic", build_topic_query),
             ("find_people_by_location", build_location_query),
             ("semantic_search_facts", build_semantic_search),
