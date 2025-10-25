@@ -68,28 +68,6 @@ def _normalize_person_profile(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_people_by_skill(output) -> list[RetrievedFact]:
-    facts: list[RetrievedFact] = []
-    for person in output.people:
-        attributes = {}
-        if person.proficiency:
-            attributes["proficiency"] = person.proficiency
-        if person.years_experience is not None:
-            attributes["years_experience"] = person.years_experience
-        facts.append(
-            _build_fact(
-                person_id=person.person_id,
-                person_name=person.name,
-                fact_type="HAS_SKILL",
-                fact_object=output.skill,
-                attributes=attributes,
-                confidence=person.confidence,
-                evidence=person.evidence,
-            )
-        )
-    return facts
-
-
 def _normalize_people_by_org(output) -> list[RetrievedFact]:
     facts: list[RetrievedFact] = []
     for person in output.people:
@@ -194,73 +172,11 @@ def _normalize_semantic_search(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_conversation_participants(output) -> list[RetrievedFact]:
-    facts: list[RetrievedFact] = []
-
-    def build_key(person_id: str, mention_type: str, reference: str | None) -> tuple[str, str, str | None]:
-        return (person_id, mention_type, reference)
-
-    seen: set[tuple[str, str, str | None]] = set()
-
-    for mention in output.explicit_mentions:
-        if not mention.person_id:
-            continue
-        key = build_key(mention.person_id, "explicit", None)
-        if key in seen:
-            continue
-        seen.add(key)
-        attributes = {
-            "mention_type": "explicit",
-            "mentioned_in_message": mention.mentioned_in_message,
-            "mentioned_name": mention.name,
-        }
-        facts.append(
-            _build_fact(
-                person_id=mention.person_id,
-                person_name=mention.name or mention.person_id,
-                fact_type="CONVERSATION_MENTION",
-                fact_object=None,
-                attributes=attributes,
-                confidence=0.5,
-                evidence=[],
-            )
-        )
-
-    for reference in output.implicit_references:
-        for guess in reference.possible_matches:
-            key = build_key(guess.person_id, "implicit", reference.reference)
-            if key in seen:
-                continue
-            seen.add(key)
-            attributes = {
-                "mention_type": "implicit",
-                "reference": reference.reference,
-                "reason": guess.reason,
-            }
-            if guess.confidence is not None:
-                attributes["llm_confidence"] = guess.confidence
-            facts.append(
-                _build_fact(
-                    person_id=guess.person_id,
-                    person_name=guess.name or guess.person_id,
-                    fact_type="CONVERSATION_MENTION",
-                    fact_object=None,
-                    attributes=attributes,
-                    confidence=guess.confidence,
-                    evidence=[],
-                )
-            )
-
-    return facts
-
-
 TOOL_NORMALIZERS = {
     "get_person_profile": _normalize_person_profile,
-    "find_people_by_skill": _normalize_people_by_skill,
     "find_people_by_organization": _normalize_people_by_org,
     "find_people_by_topic": _normalize_people_by_topic,
     "get_person_timeline": _normalize_person_timeline,
     "find_people_by_location": _normalize_people_by_location,
     "semantic_search_facts": _normalize_semantic_search,
-    "get_conversation_participants": _normalize_conversation_participants,
 }

@@ -282,7 +282,7 @@ class ProfileCache:
 
 ```python
 def build_system_prompt(conversation_context):
-    participants = get_conversation_participants(conversation_context)
+    participants = conversation_context.participants
     
     profiles = []
     for person_id in participants:

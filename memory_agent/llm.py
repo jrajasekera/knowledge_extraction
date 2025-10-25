@@ -42,12 +42,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "person_id (required), fact_types (optional)",
         "example": "Use when the user says 'What do we know about Alice?'",
     },
-    "find_people_by_skill": {
-        "description": "Return people who possess a given skill with optional confidence filtering.",
-        "use_when": "The goal asks who knows or is an expert in a specific skill or technology.",
-        "inputs": "skill (required), min_confidence, limit (optional)",
-        "example": "Use when asked 'Who knows Python?'",
-    },
     "find_people_by_organization": {
         "description": "List people who currently or previously worked at an organization.",
         "use_when": "The goal mentions a company or organization and asks who is associated with it.",
@@ -77,12 +71,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "use_when": "The goal references a geographic location.",
         "inputs": "location (required), min_confidence, limit (optional)",
         "example": "Use when asked 'Who is based in New York?'",
-    },
-    "get_conversation_participants": {
-        "description": "Resolve which people are explicitly or implicitly referenced in the conversation.",
-        "use_when": "The conversation mentions people indirectly and clarity is needed before deeper queries.",
-        "inputs": "messages (provided automatically)",
-        "example": "Use at the beginning when the conversation references 'he' or 'my brother'.",
     },
     "semantic_search_facts": {
         "description": "Perform semantic search across all fact embeddings for flexible matching.",
@@ -535,8 +523,8 @@ class LLMClient:
             "If you decide no tool should run, set should_stop to true and explain why in stop_reason.\n\n"
             "### Examples\n"
             "1. Goal: 'Tell me about Alice's background' -> get_person_profile\n"
-            "2. Goal: 'Who knows Rust?' -> find_people_by_skill\n"
-            "3. Goal: 'Goal already answered' -> should_stop true\n\n"
+            "2. Goal: 'Goal already answered' -> should_stop true\n"
+            "3. Goal: 'Who is based in New York?' -> find_people_by_location\n\n"
             "Respond now with JSON only."
         )
         return prompt
@@ -651,30 +639,6 @@ class LLMClient:
                 "should_stop": False,
                 "stop_reason": None,
             }
-
-        if "find_people_by_skill" in available_tools and any(
-            keyword in conversation_text.lower() for keyword in ["skill", "expert", "knows"]
-        ):
-            return {
-                "tool_name": "find_people_by_skill",
-                "parameters": {"skill": goal_text or conversation_text},
-                "reasoning": "Fallback heuristic detected skill-oriented language.",
-                "confidence": "low",
-                "should_stop": False,
-                "stop_reason": None,
-            }
-
-        if "get_conversation_participants" in available_tools:
-            messages = state.get("conversation", [])
-            if messages:
-                return {
-                    "tool_name": "get_conversation_participants",
-                    "parameters": {"messages": messages},
-                    "reasoning": "Fallback heuristic resolved participants in the conversation.",
-                    "confidence": "low",
-                    "should_stop": False,
-                    "stop_reason": None,
-                }
 
         if "semantic_search_facts" in available_tools:
             return {

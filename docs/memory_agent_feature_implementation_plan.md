@@ -101,43 +101,6 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Filter by `fact_types` if provided
 - Return empty list if person not found
 
----
-
-#### Tool 2: `find_people_by_skill`
-**Purpose**: Find people who have a specific skill
-
-**Input:**
-```python
-{
-    "skill": str,  # Skill name (case-insensitive)
-    "min_confidence": float = 0.5,
-    "limit": int = 10
-}
-```
-
-**Output:**
-```python
-{
-    "skill": str,
-    "people": [
-        {
-            "person_id": str,
-            "name": str,
-            "proficiency": str,
-            "years_experience": Optional[int],
-            "confidence": float,
-            "evidence": list[str]
-        }
-    ]
-}
-```
-
-**Implementation Notes:**
-- Query: `MATCH (p:Person)-[r:HAS_SKILL]->(s:Skill) WHERE toLower(s.name) = toLower($skill)`
-- Order by confidence DESC
-- Apply semantic search if exact match fails (see Tool 9)
-
----
 
 #### Tool 3: `find_people_by_organization`
 **Purpose**: Find people who work or worked at an organization
@@ -329,50 +292,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 
 ---
 
-#### Tool 8: `get_conversation_participants`
-**Purpose**: Identify people mentioned or implied in conversation
-
-**Input:**
-```python
-{
-    "messages": list[dict],  # Conversation messages
-}
-```
-
-**Output:**
-```python
-{
-    "explicit_mentions": [
-        {
-            "name": str,
-            "person_id": Optional[str],
-            "mentioned_in_message": int  # index in messages array
-        }
-    ],
-    "implicit_references": [
-        {
-            "reference": str,  # e.g., "my brother", "the new hire"
-            "possible_matches": [
-                {
-                    "person_id": str,
-                    "name": str,
-                    "confidence": float,
-                    "reason": str
-                }
-            ]
-        }
-    ]
-}
-```
-
-**Implementation Notes:**
-- Parse messages for names, pronouns, relationships
-- Use member table + aliases for resolution
-- Look for contextual clues (e.g., "my brother" + RELATED_TO relationships)
-
----
-
-#### Tool 9: `semantic_search_facts`
+#### Tool 8: `semantic_search_facts`
 **Purpose**: Find facts semantically similar to a query
 
 **Input:**

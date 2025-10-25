@@ -56,12 +56,6 @@ def _build_tool_catalog(self, available_tools: dict[str, ToolBase]) -> str:
             "inputs": "person_id (required)",
             "example": "When asked 'What do we know about Alice?' or user mentions '@123456'"
         },
-        "find_people_by_skill": {
-            "description": "Finds all people who have a particular skill or expertise",
-            "use_when": "User asks 'who knows X' or 'who is good at Y'",
-            "inputs": "skill (required), min_confidence (optional), limit (optional)",
-            "example": "When asked 'Who knows Python?' or 'Who's an expert in machine learning?'"
-        },
         "find_people_by_organization": {
             "description": "Finds people who work or worked at a specific organization",
             "use_when": "User asks about employees/members of a company",
@@ -91,12 +85,6 @@ def _build_tool_catalog(self, available_tools: dict[str, ToolBase]) -> str:
             "use_when": "User asks how two people know each other or what they have in common",
             "inputs": "person_a_id (required), person_b_id (required)",
             "example": "When asked 'How do Alice and Bob know each other?'"
-        },
-        "get_conversation_participants": {
-            "description": "Identifies and resolves people mentioned in the current conversation",
-            "use_when": "Need to understand who is being discussed before other queries",
-            "inputs": "messages (provided automatically)",
-            "example": "When conversation has ambiguous references like 'my brother' or unclear @mentions"
         },
         "semantic_search_facts": {
             "description": "Searches for facts semantically similar to a natural language query",
@@ -258,16 +246,16 @@ Entities: people_ids=['12345']
 Best Choice: get_person_profile (person_id='12345')
 Reasoning: "User asks about a specific identified person. get_person_profile retrieves comprehensive facts."
 
-### Example 2: Skill-Based Query  
-Goal: "Who knows Rust?"
-Best Choice: find_people_by_skill (skill='Rust')
-Reasoning: "Direct skill query. find_people_by_skill is designed for exactly this use case."
+### Example 2: Topic-Based Query  
+Goal: "Who cares about climate change?"
+Best Choice: find_people_by_topic (topic='climate change')
+Reasoning: "The request is about interest in a subject, so find_people_by_topic can surface relevant people."
 
 ### Example 3: Avoiding Repetition
-Goal: "Find Python experts"
-Tool History: find_people_by_skill(Python) returned 0 results
+Goal: "Find people in Paris"
+Tool History: find_people_by_location(Paris) returned 0 results
 Best Choice: {{should_stop: true}}
-Reasoning: "Already tried find_people_by_skill with no results. No Python expertise recorded."
+Reasoning: "Location-specific tool already ran with no matches, so stopping avoids redundant calls."
 
 ### Example 4: Broad Question
 Goal: "Who can help with distributed systems design?"
@@ -336,16 +324,6 @@ def _fallback_tool_selection(
                 "confidence": "medium",
                 "should_stop": False,
                 "parameters": {"person_id": person_id}
-            }
-    
-    # Try skill query
-    if any(word in conversation_text for word in ["knows", "expert", "skill"]):
-        if "find_people_by_skill" in available_tools:
-            return {
-                "tool_name": "find_people_by_skill",
-                "reasoning": "Fallback heuristic: skill-related keywords detected",
-                "confidence": "low",
-                "should_stop": False
             }
     
     # Default to semantic search as last resort

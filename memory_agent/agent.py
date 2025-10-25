@@ -149,8 +149,6 @@ def create_memory_agent_graph(
             identified["people_mentions"] = llm_entities["people"]
         if llm_entities.get("locations"):
             identified["locations"] = llm_entities["locations"]
-        if llm_entities.get("skills"):
-            identified["skills"] = llm_entities["skills"]
 
         logger.debug("Identified entities: %s", identified)
         logger.debug("Initial goal: %s", goal)
@@ -184,12 +182,6 @@ def create_memory_agent_graph(
                 return {"organization": organizations[0]}
             return None
 
-        def build_skill_query() -> dict[str, Any] | None:
-            skill = extract_skill(conversation_text)
-            if skill:
-                return {"skill": skill}
-            return None
-
         def build_topic_query() -> dict[str, Any] | None:
             topics = identified.get("topics") or []
             if topics:
@@ -210,32 +202,20 @@ def create_memory_agent_graph(
                 return {"query": conversation_text[-500:], "limit": state.get("max_facts", config.max_facts)}
             return None
 
-        def build_conversation_participants() -> dict[str, Any] | None:
-            messages = state.get("conversation", [])
-            if messages:
-                return {"messages": messages}
-            return None
-
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
             ("get_person_profile", build_person_profile),
             ("find_people_by_organization", build_org_query),
-            ("find_people_by_skill", build_skill_query),
             ("find_people_by_topic", build_topic_query),
             ("find_people_by_location", build_location_query),
             ("semantic_search_facts", build_semantic_search),
-            ("get_conversation_participants", build_conversation_participants),
         ]
 
         def fallback_payload(tool_name: str) -> dict[str, Any] | None:
             goal_text = state.get("current_goal") or conversation_text
             if not goal_text:
                 return None
-            if tool_name == "get_conversation_participants":
-                return {"messages": state.get("conversation", [])}
             if tool_name == "find_people_by_topic":
                 return {"topic": goal_text}
-            if tool_name == "find_people_by_skill":
-                return {"skill": goal_text}
             if tool_name == "find_people_by_location":
                 return {"location": goal_text}
             if tool_name == "find_people_by_organization":
@@ -304,10 +284,6 @@ def create_memory_agent_graph(
                         alternate = determine_tool_from_goal(state, preferred_tool=tool_name)
                         if alternate:
                             parameters = alternate.get("input", {})
-                        elif tool_name == "get_conversation_participants":
-                            parameters = {"messages": state.get("conversation", [])}
-                    if tool_name == "get_conversation_participants" and "messages" not in parameters:
-                        parameters["messages"] = state.get("conversation", [])
 
                     should_refine = any(
                         call.get("name") == tool_name and call.get("result_count", 0) == 0
@@ -612,21 +588,6 @@ def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
             return "medium"
     return "low"
 
-
-def extract_skill(text: str) -> str | None:
-    """Very lightweight heuristic to detect skill queries."""
-    if "knows" in text:
-        fragment = text.split("knows", 1)[1].strip()
-        if fragment:
-            candidate = fragment.split()[0].strip("?.!,")
-            if len(candidate) > 2:
-                return candidate
-    if "expert in" in text:
-        fragment = text.split("expert in", 1)[1].strip()
-        candidate = fragment.split()[0].strip("?.!,")
-        if len(candidate) > 2:
-            return candidate
-    return None
 
 
 def extract_topic(text: str) -> str | None:
