@@ -15,6 +15,7 @@ from ie.client import LlamaServerClient, LlamaServerConfig
 
 from .fact_formatter import format_fact
 from .models import MessageModel, RetrievedFact
+from .serialization import json_dumps
 from .state import AgentState
 from .tools import ToolBase
 
@@ -328,7 +329,7 @@ class LLMClient:
             f"- Type: {fact.fact_type}\n"
             f"- Person: {fact.person_name} ({fact.person_id})\n"
             f"- Object: {fact.fact_object}\n"
-            f"- Attributes: {json.dumps(fact.attributes, indent=2)}\n"
+            f"- Attributes: {json_dumps(fact.attributes, indent=2)}\n"
             f"- Confidence Score: {fact.confidence}\n"
             f"- Evidence Count: {len(fact.evidence)}\n"
             f"- Timestamp: {fact.timestamp}\n\n"
@@ -423,12 +424,12 @@ class LLMClient:
         previous_repr = (
             "No previous results (first attempt)"
             if not previous_results
-            else json.dumps(previous_results, indent=2)[:800]
+            else json_dumps(previous_results, indent=2)[:800]
         )
         prompt = (
             "Refine the parameters for a knowledge graph tool based on context and previous results.\n\n"
             f"## Tool\n{tool_name}\n\n"
-            f"## Initial Parameters\n{json.dumps(initial_parameters, indent=2)}\n\n"
+            f"## Initial Parameters\n{json_dumps(initial_parameters, indent=2)}\n\n"
             f"## Conversation Context\n{conversation_context}\n\n"
             f"## Previous Results\n{previous_repr}\n\n"
             "## Output Format\n"

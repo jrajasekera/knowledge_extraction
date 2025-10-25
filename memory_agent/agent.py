@@ -14,6 +14,7 @@ from .fact_formatter import deduplicate_facts, format_facts
 from .llm import LLMClient
 from .models import RetrievalRequest, RetrievedFact
 from .normalization import normalize_to_facts
+from .serialization import to_serializable
 from .state import AgentState
 from .tools import ToolBase
 from .tools.base import ToolError
@@ -71,7 +72,11 @@ class MemoryAgent:
             "entity_extraction_results": {},
             "should_stop_evaluation": {},
         }
-        final_state: AgentState = await self.graph.ainvoke(initial_state)
+        recursion_limit = _estimate_recursion_limit(max_iterations)
+        final_state: AgentState = await self.graph.ainvoke(
+            initial_state,
+            config={"recursion_limit": recursion_limit},
+        )
         processing_time_ms = int((time.perf_counter() - start) * 1000)
 
         metadata = {
@@ -374,7 +379,7 @@ def create_memory_agent_graph(
             tool_calls.append(
                 {
                     "name": tool_name,
-                    "input": tool_input,
+                    "input": to_serializable(tool_input),
                     "result_count": 0,
                     "error": str(exc),
                     "success": False,
@@ -401,7 +406,7 @@ def create_memory_agent_graph(
         tool_calls.append(
             {
                 "name": tool_name,
-                "input": tool_input,
+                "input": to_serializable(tool_input),
                 "result_count": len(meaningful_facts),
                 "success": len(meaningful_facts) > 0,
                 "duration_ms": duration_ms,
@@ -670,3 +675,11 @@ def extract_location(text: str) -> str | None:
             if token and token not in STOPWORDS and len(token) > 2:
                 return token
     return None
+
+
+def _estimate_recursion_limit(max_iterations: int) -> int:
+    """Compute a LangGraph recursion limit that comfortably covers all steps."""
+    per_iteration_steps = 4  # plan, execute, evaluate, follow-up plan
+    safety_margin = 10
+    limit = max_iterations * per_iteration_steps + safety_margin
+    return max(25, limit)
