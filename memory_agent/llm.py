@@ -55,10 +55,10 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "example": "Use when asked 'What's Bob's work history?'",
     },
     "semantic_search_facts": {
-        "description": "Perform semantic search across all fact embeddings for flexible matching.",
-        "use_when": "Other tools are not specific enough or previous targeted queries returned nothing.",
-        "inputs": "query (required), limit, similarity_threshold (optional)",
-        "example": "Use when asked nuanced questions like 'Who has experience with leadership in startups?'",
+        "description": "Perform semantic search using multiple keywords or key phrases to find relevant facts across all types.",
+        "use_when": "The goal requires broad discovery across fact types, or when you need to search for concepts using multiple related terms.",
+        "inputs": "queries (required, list of 1-5 keywords/phrases), limit, similarity_threshold (optional)",
+        "example": "Use when asked 'Who has startup experience?' - extract keywords like ['startup', 'founder', 'entrepreneur', 'early-stage company'] and search with all of them to maximize recall.",
     },
 }
 
@@ -611,9 +611,11 @@ class LLMClient:
         conversation_text = " ".join(msg.content for msg in state.get("conversation", []))
 
         if "semantic_search_facts" in available_tools:
+            # Use goal text as a single query in fallback mode
+            queries = [goal_text] if goal_text else [conversation_text]
             return {
                 "tool_name": "semantic_search_facts",
-                "parameters": {"query": goal_text or conversation_text, "limit": state.get("max_facts", 10)},
+                "parameters": {"queries": queries, "limit": state.get("max_facts", 10)},
                 "reasoning": "Fallback heuristic defaulted to semantic search.",
                 "confidence": "low",
                 "should_stop": False,

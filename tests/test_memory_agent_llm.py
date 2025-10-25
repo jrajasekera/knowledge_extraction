@@ -56,7 +56,7 @@ async def test_aplan_tool_usage_fallback_when_llm_unavailable():
     # Force llama client to be None to exercise fallback behavior
     client._llama_client = None
 
-    heuristic_candidate = {"name": "semantic_search_facts", "input": {"query": "test"}}
+    heuristic_candidate = {"name": "semantic_search_facts", "input": {"queries": ["test"]}}
     state = {
         "conversation": [],
         "identified_entities": {},
@@ -68,5 +68,5 @@ async def test_aplan_tool_usage_fallback_when_llm_unavailable():
     result = await client.aplan_tool_usage("Who knows Go?", tools, state, heuristic_candidate)
 
     assert result["tool_name"] == "semantic_search_facts"
-    assert result["parameters"] == {"query": "test"}
+    assert result["parameters"] == {"queries": ["test"]}
     assert result["should_stop"] is False
