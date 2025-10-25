@@ -41,7 +41,7 @@ class SemanticSearchResult(BaseModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
     similarity_score: float
     confidence: float | None = None
-    evidence: list[str] = Field(default_factory=list)
+    evidence: list[str | dict[str, Any]] = Field(default_factory=list)
 
 
 class SemanticSearchOutput(BaseModel):
@@ -124,6 +124,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
             for row in rows:
                 node = row.get("node")
                 score = row.get("score", 0.0)
+                evidence_with_content = row.get("evidence_with_content", [])
 
                 # Apply similarity threshold
                 if input_data.similarity_threshold and score < input_data.similarity_threshold:
@@ -161,6 +162,9 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
                 fact_object = properties.get("fact_object")
                 dedup_key = (person_id, fact_type, fact_object)
 
+                # Use evidence_with_content if available, fallback to evidence IDs
+                evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []
+
                 # Check if we should add/update this result
                 if dedup_key not in results_dict or score > results_dict[dedup_key].similarity_score:
                     result = SemanticSearchResult(
@@ -171,7 +175,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
                         attributes=attributes,
                         similarity_score=score,
                         confidence=properties.get("confidence"),
-                        evidence=properties.get("evidence") or [],
+                        evidence=evidence,
                     )
 
                     if dedup_key in results_dict:

@@ -30,15 +30,31 @@ def format_fact(fact: RetrievedFact) -> str:
     if fact.fact_object:
         details.append(fact.fact_object)
     if fact.attributes:
-        attribute_chunks = [f"{key}={value}" for key, value in fact.attributes.items() if value not in (None, "")]
+        # Filter out assessment metadata before formatting
+        attribute_chunks = [
+            f"{key}={value}"
+            for key, value in fact.attributes.items()
+            if value not in (None, "") and key != "assessment"
+        ]
         if attribute_chunks:
             details.append(", ".join(attribute_chunks))
     descriptor = " ".join(details).strip()
-    evidence_ids = ", ".join(e.source_id for e in fact.evidence) if fact.evidence else "unknown"
+
+    # Format evidence with snippets if available
+    evidence_parts = []
+    for e in fact.evidence:
+        if hasattr(e, 'snippet') and e.snippet:
+            # Truncate long snippets
+            snippet = e.snippet if len(e.snippet) <= 500 else e.snippet[:497] + "..."
+            evidence_parts.append(f'"{snippet}"')
+        elif hasattr(e, 'source_id'):
+            evidence_parts.append(e.source_id)
+    evidence_text = " | ".join(evidence_parts) if evidence_parts else "unknown"
+
     confidence_text = f"{fact.confidence:.2f}" if fact.confidence is not None else "unknown"
     if descriptor:
-        return f"{fact.person_name} {fact.fact_type.lower()} {descriptor} (confidence: {confidence_text}, evidence: {evidence_ids})"
-    return f"{fact.person_name} {fact.fact_type.lower()} (confidence: {confidence_text}, evidence: {evidence_ids})"
+        return f"{fact.person_name} {fact.fact_type.lower()} {descriptor} (confidence: {confidence_text}, evidence: {evidence_text})"
+    return f"{fact.person_name} {fact.fact_type.lower()} (confidence: {confidence_text}, evidence: {evidence_text})"
 
 
 def format_facts(facts: Iterable[RetrievedFact]) -> list[str]:

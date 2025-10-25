@@ -50,7 +50,12 @@ def run_vector_query(
     query = """
     CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
     YIELD node, score
-    RETURN node, score
+    WITH node, score, node.evidence AS evidence_ids
+    OPTIONAL MATCH (msg:Message)
+    WHERE msg.id IN evidence_ids
+    WITH node, score,
+         COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp}) AS evidence_with_content
+    RETURN node, score, evidence_with_content
     """
     rows = run_read_query(context, query, parameters)
     if not filters:

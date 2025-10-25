@@ -54,10 +54,8 @@
 1. Copy the structure of `scripts/embed_facts.py`.
 2. CLI flags:
    - `--settings-from-env` (hidden, for parity).
-   - `--channel` / `--guild` filters (optional) to embed subsets while testing.
    - `--cleanup` boolean.
    - `--dry-run` to log summary without writing (skip upsert/cleanup).
-   - `--since` ISO timestamp to embed only recent messages.
 3. Steps:
    - Load `Settings` (extend config with message-embedding defaults under `settings.embeddings_messages` if needed).
    - Instantiate `EmbeddingProvider` (optionally allow a different model/env variable `MESSAGE_EMBEDDING_MODEL`).
@@ -101,4 +99,3 @@
 - Do we need different models for messages vs. facts (e.g., instruct-tuned vs. general)? Config already allows override.
 - How do we treat non-textual messages (images, stickers)? Future extension could embed captions or OCR output.
 - Rate limiting: if the message corpus is huge, do we need incremental checkpoints to avoid re-embedding unchanged messages?
-
