@@ -12,3 +12,4 @@ wheels/
 .idea/
 data/sample.json
 discord.db
+manual_tests
