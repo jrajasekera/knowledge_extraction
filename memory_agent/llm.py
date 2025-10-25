@@ -48,12 +48,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "topic (required), relationship_types, limit (optional)",
         "example": "Use when asked 'Who is into climate change research?'",
     },
-    "get_person_timeline": {
-        "description": "Return temporal facts about a person such as jobs, education, or events.",
-        "use_when": "The goal asks for someone's history or timeline.",
-        "inputs": "person_id (required), fact_types, start_date, end_date (optional)",
-        "example": "Use when asked 'What's Bob's work history?'",
-    },
     "semantic_search_facts": {
         "description": "Perform semantic search using multiple keywords or key phrases to find relevant facts across all types.",
         "use_when": "The goal requires broad discovery across fact types, or when you need to search for concepts using multiple related terms.",

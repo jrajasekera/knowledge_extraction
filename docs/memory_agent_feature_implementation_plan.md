@@ -174,44 +174,7 @@ The agent has access to 6 high-level tools that abstract Neo4j queries. These to
 - Support semantic search for similar topics
 - Aggregate if same person has multiple topic relationships
 
-#### Tool 4: `get_person_timeline`
-**Purpose**: Get temporal facts about a person (jobs, education, events)
-
-**Input:**
-```python
-{
-    "person_id": str,
-    "fact_types": Optional[list[str]] = None,  # Default: temporal facts
-    "start_date": Optional[str] = None,
-    "end_date": Optional[str] = None
-}
-```
-
-**Output:**
-```python
-{
-    "person_id": str,
-    "name": str,
-    "timeline": [
-        {
-            "type": str,
-            "object": str,
-            "start": Optional[str],
-            "end": Optional[str],
-            "attributes": dict,
-            "confidence": float,
-            "evidence": list[str]
-        }
-    ]
-}
-```
-
-**Implementation Notes:**
-- Default fact types: WORKS_AT, STUDIED_AT, WORKING_ON, PREVIOUSLY, ATTENDED_EVENT, EXPERIENCED
-- Sort by start date (or timestamp if no start date)
-- Filter by date range if provided
-
-#### Tool 5: `find_people_by_location`
+#### Tool 4: `find_people_by_location`
 **Purpose**: Find people who live in or have connection to a location
 
 **Input:**
@@ -245,7 +208,7 @@ The agent has access to 6 high-level tools that abstract Neo4j queries. These to
 - Also check work locations (WORKS_AT.location)
 - Support fuzzy location matching (e.g., "SF" → "San Francisco")
 
-#### Tool 6: `semantic_search_facts`
+#### Tool 5: `semantic_search_facts`
 **Purpose**: Find facts semantically similar to a query
 
 **Input:**

@@ -6,7 +6,6 @@ from typing import Dict
 
 from .base import ToolBase, ToolContext
 from .people_by_topic import FindPeopleByTopicTool
-from .person_timeline import GetPersonTimelineTool
 from .relationships_between import GetRelationshipsBetweenTool
 from .semantic_search import SemanticSearchFactsTool
 
@@ -16,7 +15,6 @@ def build_toolkit(context: ToolContext) -> Dict[str, ToolBase]:
     tools: Dict[str, ToolBase] = {
         "get_relationships_between": GetRelationshipsBetweenTool(context),
         "find_people_by_topic": FindPeopleByTopicTool(context),
-        "get_person_timeline": GetPersonTimelineTool(context),
         "semantic_search_facts": SemanticSearchFactsTool(context),
     }
     return tools

@@ -68,12 +68,6 @@ def _build_tool_catalog(self, available_tools: dict[str, ToolBase]) -> str:
             "inputs": "location (required)",
             "example": "When asked 'Who lives in SF?' or 'Anyone in New York?'"
         },
-        "get_person_timeline": {
-            "description": "Retrieves temporal/historical facts about a person (jobs, education, events)",
-            "use_when": "User asks about someone's history, career progression, or past",
-            "inputs": "person_id (required), fact_types (optional), start_date/end_date (optional)",
-            "example": "When asked 'What's Alice's work history?' or 'Where did Bob study?'"
-        },
         "get_relationships_between": {
             "description": "Finds direct relationships and shared contexts between two people",
             "use_when": "User asks how two people know each other or what they have in common",
