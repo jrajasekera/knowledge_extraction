@@ -42,12 +42,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "person_id (required), fact_types (optional)",
         "example": "Use when the user says 'What do we know about Alice?'",
     },
-    "find_people_by_organization": {
-        "description": "List people who currently or previously worked at an organization.",
-        "use_when": "The goal mentions a company or organization and asks who is associated with it.",
-        "inputs": "organization (required), current_only, min_confidence, limit (optional)",
-        "example": "Use when asked 'Anyone from Google?'",
-    },
     "get_relationships_between": {
         "description": "Show relationships and shared contexts between two people.",
         "use_when": "The goal compares or connects two specific people.",

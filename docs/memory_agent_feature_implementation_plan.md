@@ -63,7 +63,7 @@ Discord User
 
 ## 2. Tool Design
 
-The agent has access to 10 high-level tools that abstract Neo4j queries. These tools provide semantic operations without requiring the agent to write Cypher.
+The agent has access to 6 high-level tools that abstract Neo4j queries. These tools provide semantic operations without requiring the agent to write Cypher.
 
 ### 2.1 Tool Catalog
 
@@ -102,46 +102,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Return empty list if person not found
 
 
-#### Tool 3: `find_people_by_organization`
-**Purpose**: Find people who work or worked at an organization
-
-**Input:**
-```python
-{
-    "organization": str,
-    "current_only": bool = False,
-    "min_confidence": float = 0.5,
-    "limit": int = 10
-}
-```
-
-**Output:**
-```python
-{
-    "organization": str,
-    "people": [
-        {
-            "person_id": str,
-            "name": str,
-            "role": Optional[str],
-            "start_date": Optional[str],
-            "end_date": Optional[str],
-            "location": Optional[str],
-            "confidence": float,
-            "evidence": list[str]
-        }
-    ]
-}
-```
-
-**Implementation Notes:**
-- Query both `WORKS_AT` and `PREVIOUSLY` relationships
-- If `current_only=True`, filter for `WORKS_AT` only
-- Support partial matching on organization name
-
----
-
-#### Tool 4: `get_relationships_between`
+#### Tool 2: `get_relationships_between`
 **Purpose**: Find connections between two people
 
 **Input:**
@@ -178,9 +139,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Shared contexts: Find common nodes (orgs, projects, events) both connect to
 - Include interaction weight if `INTERACTED_WITH` relationship exists
 
----
-
-#### Tool 5: `find_people_by_topic`
+#### Tool 3: `find_people_by_topic`
 **Purpose**: Find people who discuss or care about a topic
 
 **Input:**
@@ -215,9 +174,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Support semantic search for similar topics
 - Aggregate if same person has multiple topic relationships
 
----
-
-#### Tool 6: `get_person_timeline`
+#### Tool 4: `get_person_timeline`
 **Purpose**: Get temporal facts about a person (jobs, education, events)
 
 **Input:**
@@ -254,9 +211,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Sort by start date (or timestamp if no start date)
 - Filter by date range if provided
 
----
-
-#### Tool 7: `find_people_by_location`
+#### Tool 5: `find_people_by_location`
 **Purpose**: Find people who live in or have connection to a location
 
 **Input:**
@@ -290,9 +245,7 @@ The agent has access to 10 high-level tools that abstract Neo4j queries. These t
 - Also check work locations (WORKS_AT.location)
 - Support fuzzy location matching (e.g., "SF" → "San Francisco")
 
----
-
-#### Tool 8: `semantic_search_facts`
+#### Tool 6: `semantic_search_facts`
 **Purpose**: Find facts semantically similar to a query
 
 **Input:**

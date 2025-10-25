@@ -56,12 +56,6 @@ def _build_tool_catalog(self, available_tools: dict[str, ToolBase]) -> str:
             "inputs": "person_id (required)",
             "example": "When asked 'What do we know about Alice?' or user mentions '@123456'"
         },
-        "find_people_by_organization": {
-            "description": "Finds people who work or worked at a specific organization",
-            "use_when": "User asks about employees/members of a company",
-            "inputs": "organization (required), current_only (optional)",
-            "example": "When asked 'Who works at Google?' or 'Anyone from Microsoft here?'"
-        },
         "find_people_by_topic": {
             "description": "Finds people who discuss, care about, or are curious about a topic",
             "use_when": "User asks who is interested in or talks about something",

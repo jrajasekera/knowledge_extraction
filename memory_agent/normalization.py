@@ -68,32 +68,6 @@ def _normalize_person_profile(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_people_by_org(output) -> list[RetrievedFact]:
-    facts: list[RetrievedFact] = []
-    for person in output.people:
-        attributes = {}
-        if person.role:
-            attributes["role"] = person.role
-        if person.start_date:
-            attributes["start_date"] = person.start_date
-        if person.end_date:
-            attributes["end_date"] = person.end_date
-        if person.location:
-            attributes["location"] = person.location
-        facts.append(
-            _build_fact(
-                person_id=person.person_id,
-                person_name=person.name,
-                fact_type="WORKS_AT",
-                fact_object=output.organization,
-                attributes=attributes,
-                confidence=person.confidence,
-                evidence=person.evidence,
-            )
-        )
-    return facts
-
-
 def _normalize_people_by_topic(output) -> list[RetrievedFact]:
     facts = []
     for person in output.people:
@@ -174,7 +148,6 @@ def _normalize_semantic_search(output) -> list[RetrievedFact]:
 
 TOOL_NORMALIZERS = {
     "get_person_profile": _normalize_person_profile,
-    "find_people_by_organization": _normalize_people_by_org,
     "find_people_by_topic": _normalize_people_by_topic,
     "get_person_timeline": _normalize_person_timeline,
     "find_people_by_location": _normalize_people_by_location,

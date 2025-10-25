@@ -176,12 +176,6 @@ def create_memory_agent_graph(
                     return {"person_id": person_id}
             return None
 
-        def build_org_query() -> dict[str, Any] | None:
-            organizations = identified.get("organizations") or []
-            if organizations:
-                return {"organization": organizations[0]}
-            return None
-
         def build_topic_query() -> dict[str, Any] | None:
             topics = identified.get("topics") or []
             if topics:
@@ -204,7 +198,6 @@ def create_memory_agent_graph(
 
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
             ("get_person_profile", build_person_profile),
-            ("find_people_by_organization", build_org_query),
             ("find_people_by_topic", build_topic_query),
             ("find_people_by_location", build_location_query),
             ("semantic_search_facts", build_semantic_search),
@@ -218,8 +211,6 @@ def create_memory_agent_graph(
                 return {"topic": goal_text}
             if tool_name == "find_people_by_location":
                 return {"location": goal_text}
-            if tool_name == "find_people_by_organization":
-                return {"organization": goal_text}
             if tool_name == "semantic_search_facts":
                 return {"query": goal_text, "limit": state.get("max_facts", config.max_facts)}
             return None
