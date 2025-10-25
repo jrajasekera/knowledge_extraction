@@ -51,7 +51,7 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
     "semantic_search_facts": {
         "description": "Perform semantic search using multiple keywords or key phrases to find relevant facts across all types.",
         "use_when": "The goal requires broad discovery across fact types, or when you need to search for concepts using multiple related terms.",
-        "inputs": "queries (required, list of 1-5 keywords/phrases), limit, similarity_threshold (optional)",
+        "inputs": "queries (required, list of 1-5 keywords/phrases), limit (optional, will be auto-adjusted for quality filtering), similarity_threshold (optional)",
         "example": "Use when asked 'Who has startup experience?' - extract keywords like ['startup', 'founder', 'entrepreneur', 'early-stage company'] and search with all of them to maximize recall.",
     },
 }
@@ -607,9 +607,11 @@ class LLMClient:
         if "semantic_search_facts" in available_tools:
             # Use goal text as a single query in fallback mode
             queries = [goal_text] if goal_text else [conversation_text]
+            # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
+            retrieval_limit = min(state.get("max_facts", 10) * 3, 50)
             return {
                 "tool_name": "semantic_search_facts",
-                "parameters": {"queries": queries, "limit": state.get("max_facts", 10)},
+                "parameters": {"queries": queries, "limit": retrieval_limit},
                 "reasoning": "Fallback heuristic defaulted to semantic search.",
                 "confidence": "low",
                 "should_stop": False,

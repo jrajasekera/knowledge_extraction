@@ -181,7 +181,9 @@ def create_memory_agent_graph(
 
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:
-                return {"query": conversation_text[-500:], "limit": state.get("max_facts", config.max_facts)}
+                # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
+                retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
+                return {"queries": [conversation_text[-500:]], "limit": retrieval_limit}
             return None
 
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
@@ -196,7 +198,9 @@ def create_memory_agent_graph(
             if tool_name == "find_people_by_topic":
                 return {"topic": goal_text}
             if tool_name == "semantic_search_facts":
-                return {"query": goal_text, "limit": state.get("max_facts", config.max_facts)}
+                # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
+                retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
+                return {"queries": [goal_text], "limit": retrieval_limit}
             return None
 
         if preferred_tool:
@@ -281,6 +285,19 @@ def create_memory_agent_graph(
                                 parameters.update(refined_parameters)
                         except Exception as exc:  # noqa: BLE001
                             logger.debug("Tool parameter refinement failed: %s", exc)
+
+                    # Apply retrieval multiplier for semantic_search_facts
+                    if tool_name == "semantic_search_facts" and isinstance(parameters, dict):
+                        # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
+                        current_limit = parameters.get("limit", 10)
+                        if current_limit < 50:
+                            retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
+                            parameters["limit"] = retrieval_limit
+                            logger.debug(
+                                "Applied retrieval multiplier: limit %d -> %d",
+                                current_limit,
+                                retrieval_limit,
+                            )
 
                     candidate = {"name": tool_name, "input": parameters}
                     reasoning_msg = (
