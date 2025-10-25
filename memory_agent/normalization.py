@@ -94,23 +94,6 @@ def _normalize_person_timeline(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_people_by_location(output) -> list[RetrievedFact]:
-    facts = []
-    for person in output.people:
-        facts.append(
-            _build_fact(
-                person_id=person.person_id,
-                person_name=person.name,
-                fact_type=person.relationship,
-                fact_object=output.location,
-                attributes=person.details,
-                confidence=person.confidence,
-                evidence=person.evidence,
-            )
-        )
-    return facts
-
-
 def _normalize_semantic_search(output) -> list[RetrievedFact]:
     facts = []
     for result in output.results:
@@ -131,6 +114,5 @@ def _normalize_semantic_search(output) -> list[RetrievedFact]:
 TOOL_NORMALIZERS = {
     "find_people_by_topic": _normalize_people_by_topic,
     "get_person_timeline": _normalize_person_timeline,
-    "find_people_by_location": _normalize_people_by_location,
     "semantic_search_facts": _normalize_semantic_search,
 }

@@ -179,12 +179,6 @@ def create_memory_agent_graph(
                 return {"topic": topic}
             return None
 
-        def build_location_query() -> dict[str, Any] | None:
-            location = extract_location(conversation_text)
-            if location:
-                return {"location": location}
-            return None
-
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:
                 return {"query": conversation_text[-500:], "limit": state.get("max_facts", config.max_facts)}
@@ -192,7 +186,6 @@ def create_memory_agent_graph(
 
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
             ("find_people_by_topic", build_topic_query),
-            ("find_people_by_location", build_location_query),
             ("semantic_search_facts", build_semantic_search),
         ]
 
@@ -202,8 +195,6 @@ def create_memory_agent_graph(
                 return None
             if tool_name == "find_people_by_topic":
                 return {"topic": goal_text}
-            if tool_name == "find_people_by_location":
-                return {"location": goal_text}
             if tool_name == "semantic_search_facts":
                 return {"query": goal_text, "limit": state.get("max_facts", config.max_facts)}
             return None
@@ -580,45 +571,6 @@ def extract_topic(text: str) -> str | None:
     for marker in markers:
         if marker in text:
             return marker
-    return None
-
-
-STOPWORDS = {
-    "the",
-    "a",
-    "an",
-    "my",
-    "our",
-    "their",
-    "his",
-    "her",
-    "its",
-    "this",
-    "that",
-    "these",
-    "those",
-    "friend",
-    "friends",
-    "group",
-    "team",
-    "crew",
-    "anyone",
-    "someone",
-}
-
-
-def extract_location(text: str) -> str | None:
-    """Detect possible location target."""
-    markers = [" in ", " at ", " from "]
-    lowered = text.lower()
-    for marker in markers:
-        if marker in lowered:
-            fragment = lowered.split(marker, 1)[1].strip()
-            if not fragment:
-                continue
-            token = fragment.split()[0].strip("?.!,")
-            if token and token not in STOPWORDS and len(token) > 2:
-                return token
     return None
 
 

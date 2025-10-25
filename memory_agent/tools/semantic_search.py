@@ -21,7 +21,7 @@ class SemanticSearchInput(BaseModel):
     query: str
     fact_types: list[str] | None = None
     limit: int = Field(default=10, ge=1, le=50)
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
 
 class SemanticSearchResult(BaseModel):

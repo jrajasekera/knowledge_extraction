@@ -54,12 +54,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "person_id (required), fact_types, start_date, end_date (optional)",
         "example": "Use when asked 'What's Bob's work history?'",
     },
-    "find_people_by_location": {
-        "description": "Find people associated with a location (lives, works, studied, visited).",
-        "use_when": "The goal references a geographic location.",
-        "inputs": "location (required), min_confidence, limit (optional)",
-        "example": "Use when asked 'Who is based in New York?'",
-    },
     "semantic_search_facts": {
         "description": "Perform semantic search across all fact embeddings for flexible matching.",
         "use_when": "Other tools are not specific enough or previous targeted queries returned nothing.",
@@ -511,7 +505,7 @@ class LLMClient:
             "If you decide no tool should run, set should_stop to true and explain why in stop_reason.\n\n"
             "### Examples\n"
             "1. Goal: 'Goal already answered' -> should_stop true\n"
-            "2. Goal: 'Who is based in New York?' -> find_people_by_location\n\n"
+            "2. Goal: 'Who is into climate research?' -> find_people_by_topic\n\n"
             "Respond now with JSON only."
         )
         return prompt
