@@ -57,7 +57,7 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
     "semantic_search_facts": {
         "description": "Perform semantic search across all fact embeddings for flexible matching.",
         "use_when": "Other tools are not specific enough or previous targeted queries returned nothing.",
-        "inputs": "query (required), fact_types, limit, similarity_threshold (optional)",
+        "inputs": "query (required), limit, similarity_threshold (optional)",
         "example": "Use when asked nuanced questions like 'Who has experience with leadership in startups?'",
     },
 }

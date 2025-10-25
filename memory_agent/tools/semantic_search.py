@@ -19,7 +19,6 @@ class SemanticSearchInput(BaseModel):
     """Inputs for semantic_search_facts."""
 
     query: str
-    fact_types: list[str] | None = None
     limit: int = Field(default=10, ge=1, le=50)
     similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
 
@@ -68,9 +67,6 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         embedding = self.embeddings.embed_single(input_data.query)
         if not embedding:
             return SemanticSearchOutput(query=input_data.query, results=[])
-        filters: dict[str, Any] | None = None
-        if input_data.fact_types:
-            filters = {"fact_type": input_data.fact_types}
 
         try:
             rows = run_vector_query(
@@ -78,7 +74,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
                 self.index_name,
                 embedding,
                 input_data.limit,
-                filters,
+                None,
             )
         except ToolError as exc:
             # Missing vector index or similar issues should not fail the entire request.
