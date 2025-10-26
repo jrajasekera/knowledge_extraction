@@ -7,6 +7,7 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import add_messages
 
 from .models import MessageModel, RetrievedFact
+from .tools.semantic_search_messages import SemanticSearchMessageResult
 
 
 class AgentState(TypedDict, total=False):
@@ -16,6 +17,7 @@ class AgentState(TypedDict, total=False):
     conversation: list[MessageModel]
     channel_id: str
     max_facts: int
+    max_messages: int
     max_iterations: int
 
     # LangGraph specific messages container
@@ -23,6 +25,7 @@ class AgentState(TypedDict, total=False):
 
     # Accumulated results
     retrieved_facts: list[RetrievedFact]
+    retrieved_messages: list[SemanticSearchMessageResult]
     tool_calls: list[dict[str, Any]]
     iteration: int
 
@@ -34,6 +37,7 @@ class AgentState(TypedDict, total=False):
 
     # Output data
     formatted_facts: list[str]
+    formatted_messages: list[str]
     confidence: str
     metadata: dict[str, Any]
     reasoning_trace: list[str]

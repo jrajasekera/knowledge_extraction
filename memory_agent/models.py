@@ -43,6 +43,7 @@ class RetrievalRequest(BaseModel):
     messages: list[MessageModel]
     channel_id: str
     max_facts: int | None = None
+    max_messages: int | None = None
     max_iterations: int | None = None
     request_id: str | None = None
 
@@ -69,6 +70,7 @@ class RetrievalResponse(BaseModel):
     """Successful retrieval response."""
 
     facts: list[str]
+    messages: list[str]
     confidence: ConfidenceLevel
     metadata: RetrievalMetadata
 
@@ -95,6 +97,7 @@ class FactEvidence(BaseModel):
     """Structured representation of a fact evidence payload."""
 
     source_id: str
+    author: str | None = None
     url: HttpUrl | None = None
     snippet: str | None = None
     created_at: datetime | None = None

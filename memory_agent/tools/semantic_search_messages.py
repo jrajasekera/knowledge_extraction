@@ -135,10 +135,11 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
 
     def run(self, input_data: SemanticSearchMessagesInput) -> SemanticSearchMessagesOutput:
         logger.info(
-            "semantic_search_messages called: queries=%r, limit=%d, threshold=%.2f",
+            "semantic_search_messages called: queries=%r, limit=%d, similarity_threshold=%.2f, index=%s",
             input_data.queries,
             input_data.limit,
             input_data.similarity_threshold,
+            self.index_name,
         )
 
         filters: dict[str, Any] = {}
@@ -149,52 +150,164 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         if input_data.guild_ids:
             filters["guild_id"] = input_data.guild_ids
 
+        if filters:
+            logger.info("Applying filters: %s", filters)
+
         start_dt = self._normalize_range(input_data.start_timestamp)
         end_dt = self._normalize_range(input_data.end_timestamp)
+        if start_dt or end_dt:
+            logger.info("Time range filter: start=%s, end=%s", start_dt, end_dt)
 
         dedup: dict[str, SemanticSearchMessageResult] = {}
-        total_rows = 0
+        total_raw_results = 0
+        total_filtered_by_threshold = 0
+        total_filtered_by_time = 0
+        total_missing_node = 0
+        queries_processed = 0
 
         for query_idx, query in enumerate(input_data.queries, 1):
+            logger.info("Processing query %d/%d: %r", query_idx, len(input_data.queries), query)
+
             embedding = self.embeddings.embed_single(query)
             if not embedding:
-                logger.warning("Failed to embed query %d", query_idx)
+                logger.warning("Failed to generate embedding for query %d: %r", query_idx, query)
                 continue
-            rows = run_vector_query(
-                self.context,
-                self.index_name,
-                embedding,
-                input_data.limit,
-                filters,
-                include_evidence=False,
-            )
-            total_rows += len(rows)
+
+            logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
+
+            try:
+                rows = run_vector_query(
+                    self.context,
+                    self.index_name,
+                    embedding,
+                    input_data.limit,
+                    filters,
+                    include_evidence=False,
+                )
+                logger.info("Query %d returned %d raw results from index %s", query_idx, len(rows), self.index_name)
+                total_raw_results += len(rows)
+                queries_processed += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Query %d failed: %s", query_idx, exc)
+                continue
+
+            filtered_by_threshold = 0
+            filtered_by_time = 0
+            missing_node = 0
+            added_new = 0
+            updated_existing = 0
+
             for row in rows:
                 node = row.get("node")
                 score = float(row.get("score", 0.0))
-                if not node or score < input_data.similarity_threshold:
+
+                # Apply similarity threshold
+                if score < input_data.similarity_threshold:
+                    filtered_by_threshold += 1
+                    logger.debug(
+                        "Query %d: Filtered result with score %.3f (below threshold %.2f)",
+                        query_idx,
+                        score,
+                        input_data.similarity_threshold,
+                    )
                     continue
+
+                if not node:
+                    missing_node += 1
+                    logger.debug("Query %d: Skipping row with missing node", query_idx)
+                    continue
+
                 properties = dict(node)
                 timestamp_str = properties.get("timestamp")
                 timestamp_dt = _parse_timestamp(timestamp_str)
+
+                # Apply time range filters
                 if start_dt and (timestamp_dt is None or timestamp_dt < start_dt):
+                    filtered_by_time += 1
+                    logger.debug(
+                        "Query %d: Filtered message before start time: %s < %s",
+                        query_idx,
+                        timestamp_dt,
+                        start_dt,
+                    )
                     continue
                 if end_dt and (timestamp_dt is None or timestamp_dt > end_dt):
+                    filtered_by_time += 1
+                    logger.debug(
+                        "Query %d: Filtered message after end time: %s > %s",
+                        query_idx,
+                        timestamp_dt,
+                        end_dt,
+                    )
                     continue
+
                 result = self._build_result(properties, score)
                 key = result.message_id
                 existing = dedup.get(key)
+
                 if existing is None or result.similarity_score > existing.similarity_score:
+                    if existing is not None:
+                        updated_existing += 1
+                        logger.debug(
+                            "Query %d: Updated existing message with higher score %.3f (was %.3f): message_id=%s, author=%s",
+                            query_idx,
+                            score,
+                            existing.similarity_score,
+                            result.message_id,
+                            result.author_name,
+                        )
+                    else:
+                        added_new += 1
+                        logger.debug(
+                            "Query %d: Added new message: message_id=%s, author=%s, score=%.3f",
+                            query_idx,
+                            result.message_id,
+                            result.author_name,
+                            score,
+                        )
                     dedup[key] = result
+                else:
+                    logger.debug(
+                        "Query %d: Skipped duplicate with lower score %.3f (existing %.3f): message_id=%s",
+                        query_idx,
+                        score,
+                        existing.similarity_score,
+                        result.message_id,
+                    )
+
+            total_filtered_by_threshold += filtered_by_threshold
+            total_filtered_by_time += filtered_by_time
+            total_missing_node += missing_node
+
+            logger.info(
+                "Query %d summary: raw=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, added_new=%d, updated_existing=%d",
+                query_idx,
+                len(rows),
+                filtered_by_threshold,
+                filtered_by_time,
+                missing_node,
+                added_new,
+                updated_existing,
+            )
+
+        logger.info("Total unique messages before limit: %d", len(dedup))
 
         ordered = sorted(dedup.values(), key=lambda item: item.similarity_score, reverse=True)
         limited = ordered[: input_data.limit]
+
         logger.info(
-            "semantic_search_messages returning %d/%d results (raw rows=%d)",
-            len(limited),
+            "semantic_search_messages completed: queries=%d, queries_processed=%d, total_raw_results=%d, "
+            "total_filtered_threshold=%d, total_filtered_time=%d, total_missing_node=%d, unique_messages=%d, final_results=%d",
+            len(input_data.queries),
+            queries_processed,
+            total_raw_results,
+            total_filtered_by_threshold,
+            total_filtered_by_time,
+            total_missing_node,
             len(ordered),
-            total_rows,
+            len(limited),
         )
+
         return SemanticSearchMessagesOutput(queries=input_data.queries, results=limited)
 
     @staticmethod

@@ -1,10 +1,12 @@
-"""Helpers to normalize Discord messages for embedding generation."""
+"""Helpers to normalize Discord messages for embedding generation and display formatting."""
 
 from __future__ import annotations
 
 import re
 from html import unescape
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
+
+from .tools.semantic_search_messages import SemanticSearchMessageResult
 
 
 CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
@@ -73,7 +75,11 @@ def format_message_for_embedding_text(
     mentions: Sequence[Mapping[str, str | None]] | None = None,
     channel_id: str | None = None,
 ) -> str:
-    """Normalize a Discord message into a compact embedding-friendly string."""
+    """Normalize a Discord message into a compact embedding-friendly string.
+    
+    Note: channel_name, channel_id, channel_topic, and guild_name are accepted 
+    but excluded from the embedding text. Only author, content, and mentions are included.
+    """
 
     if not content:
         return ""
@@ -85,23 +91,7 @@ def format_message_for_embedding_text(
         return ""
 
     speaker = author_name or "Unknown author"
-    context_bits: list[str] = []
-    if channel_name:
-        context_bits.append(f"#{channel_name}")
-    elif channel_id:
-        context_bits.append(f"channel {channel_id}")
-    if guild_name:
-        context_bits.append(guild_name)
-
-    location = ""
-    if context_bits:
-        location = " in " + " / ".join(context_bits)
-
-    parts = [f"{speaker}{location} said: {text}"]
-    if channel_topic:
-        topic = channel_topic.strip()
-        if topic:
-            parts.append(f"Topic: {topic}")
+    parts = [f"{speaker} said: {text}"]
 
     mention_names = _unique_mention_names(mentions)
     if mention_names:
@@ -110,4 +100,34 @@ def format_message_for_embedding_text(
     return " ".join(parts).strip()
 
 
-__all__ = ["format_message_for_embedding_text"]
+def format_message(message: SemanticSearchMessageResult) -> str:
+    """Render a message search result into a human-readable string for display.
+
+    Format: [timestamp] author_name: message_excerpt
+    """
+    # Extract author name, fallback to ID or Unknown
+    author = message.author_name or message.author_id or "Unknown"
+
+    # Extract timestamp and format as YYYY-MM-DD
+    timestamp = "unknown-date"
+    if message.timestamp:
+        # Take first 10 characters for YYYY-MM-DD format
+        timestamp = message.timestamp[:10]
+
+    # Get message content, prefer excerpt or clean_content
+    content = message.excerpt or message.clean_content or message.content or ""
+
+    # Truncate if too long
+    if len(content) > 300:
+        content = content[:297] + "..."
+
+    # Format: [date] author: content
+    return f"[{timestamp}] {author}: {content}"
+
+
+def format_messages(messages: Iterable[SemanticSearchMessageResult]) -> list[str]:
+    """Format multiple message search results into strings for display."""
+    return [format_message(msg) for msg in messages]
+
+
+__all__ = ["format_message_for_embedding_text", "format_message", "format_messages"]

@@ -54,10 +54,10 @@ def run_vector_query(
         CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
         YIELD node, score
         WITH node, score, node.evidence AS evidence_ids
-        OPTIONAL MATCH (msg:Message)
+        OPTIONAL MATCH (author:Person)-[:SENT]->(msg:Message)
         WHERE msg.id IN evidence_ids
         WITH node, score,
-             COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp}) AS evidence_with_content
+             COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp, author: coalesce(author.realName, author.name)}) AS evidence_with_content
         RETURN node, score, evidence_with_content
         """
     else:

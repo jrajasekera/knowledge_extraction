@@ -40,13 +40,17 @@ def format_fact(fact: RetrievedFact) -> str:
             details.append(", ".join(attribute_chunks))
     descriptor = " ".join(details).strip()
 
-    # Format evidence with snippets if available
+    # Format evidence with author and snippets if available
     evidence_parts = []
     for e in fact.evidence:
         if hasattr(e, 'snippet') and e.snippet:
             # Truncate long snippets
             snippet = e.snippet if len(e.snippet) <= 500 else e.snippet[:497] + "..."
-            evidence_parts.append(f'"{snippet}"')
+            # Include author if available
+            if hasattr(e, 'author') and e.author:
+                evidence_parts.append(f'{e.author}: "{snippet}"')
+            else:
+                evidence_parts.append(f'"{snippet}"')
         elif hasattr(e, 'source_id'):
             evidence_parts.append(e.source_id)
     evidence_text = " | ".join(evidence_parts) if evidence_parts else "unknown"

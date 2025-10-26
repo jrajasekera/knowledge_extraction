@@ -47,15 +47,19 @@ class MemoryAgent:
         """Run the memory agent against an incoming request."""
         start = time.perf_counter()
         max_facts = request.max_facts or self.config.max_facts
+        max_messages = request.max_messages or 10
         max_iterations = request.max_iterations or self.config.max_iterations
 
         initial_state: AgentState = {
             "conversation": request.messages,
             "channel_id": request.channel_id,
             "max_facts": max_facts,
+            "max_messages": max_messages,
             "max_iterations": max_iterations,
             "messages": [],
             "retrieved_facts": [],
+            "retrieved_messages": [],
+            "formatted_messages": [],
             "tool_calls": [],
             "iteration": 0,
             "current_goal": None,
@@ -81,6 +85,7 @@ class MemoryAgent:
         metadata = {
             "queries_executed": len(final_state.get("tool_calls", [])),
             "facts_retrieved": len(final_state.get("retrieved_facts", [])),
+            "messages_retrieved": len(final_state.get("formatted_messages", [])),
             "processing_time_ms": processing_time_ms,
             "iterations_used": final_state.get("iteration", 0),
             "tool_calls": final_state.get("tool_calls", []),
@@ -88,6 +93,7 @@ class MemoryAgent:
 
         result: dict[str, Any] = {
             "facts": final_state.get("formatted_facts", []),
+            "messages": final_state.get("formatted_messages", []),
             "confidence": final_state.get("confidence", "low"),
             "metadata": metadata,
         }
@@ -96,6 +102,7 @@ class MemoryAgent:
             result["debug"] = {
                 "reasoning_trace": final_state.get("reasoning_trace", []),
                 "retrieved_facts": [fact.model_dump() for fact in final_state.get("retrieved_facts", [])],
+                "retrieved_messages": [msg.model_dump() for msg in final_state.get("retrieved_messages", [])],
             }
         return result
 
@@ -438,21 +445,48 @@ def create_memory_agent_graph(
         }
 
     async def synthesize(state: AgentState) -> AgentState:
-        # Tools handle their own deduplication, so use facts directly
-        facts = state.get("retrieved_facts", [])
+        from .message_formatter import format_messages
+        from .tools.semantic_search_messages import SemanticSearchMessagesInput
 
         # Format facts for output
+        facts = state.get("retrieved_facts", [])
         formatted = format_facts(facts)
+
+        # Retrieve and format messages
+        formatted_messages: list[str] = []
+        max_messages = state.get("max_messages", 10)
+        if max_messages > 0:
+            tool = tools.get("semantic_search_messages")
+            if tool:
+                conversation = state.get("conversation", [])
+                conversation_text = " ".join([msg.content for msg in conversation[-3:]])
+                if conversation_text:
+                    try:
+                        search_input = SemanticSearchMessagesInput(
+                            queries=[conversation_text[-500:]],
+                            limit=max_messages,
+                            channel_ids=[state["channel_id"]],
+                        )
+                        result = tool.run(search_input)
+                        formatted_messages = format_messages(result.results)
+                        logger.info("Retrieved %d messages", len(formatted_messages))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Message retrieval failed: %s", exc)
+            else:
+                logger.warning("semantic_search_messages tool not available")
+
         confidence = compute_confidence(facts, state)
         logger.info(
-            "Synthesis produced %d formatted facts (confidence=%s)",
+            "Synthesis produced %d formatted facts and %d messages (confidence=%s)",
             len(formatted),
+            len(formatted_messages),
             confidence,
         )
-        reasoning_msg = f"Synthesized {len(formatted)} facts with confidence {confidence}."
+        reasoning_msg = f"Synthesized {len(formatted)} facts and {len(formatted_messages)} messages with confidence {confidence}."
         trace = update_reasoning(state, reasoning_msg)
         return {
             "formatted_facts": formatted[: state.get("max_facts", config.max_facts)],
+            "formatted_messages": formatted_messages[:max_messages],
             "confidence": confidence,
             "reasoning_trace": trace,
         }
