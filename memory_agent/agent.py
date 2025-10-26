@@ -117,7 +117,7 @@ def create_memory_agent_graph(
         return trace
 
     async def analyze_conversation(state: AgentState) -> AgentState:
-        logger.debug("Analyzing conversation for channel %s", state.get("channel_id"))
+        logger.info("Analyzing conversation for channel %s", state.get("channel_id"))
         insights = extract_insights(state["conversation"])
         goal = insights.questions[0] if insights.questions else "Collect relevant context."
         llm_entities: dict[str, Any] = {}
@@ -125,7 +125,7 @@ def create_memory_agent_graph(
             try:
                 llm_entities = await llm.extract_entities_from_conversation(state["conversation"])
             except Exception as exc:  # noqa: BLE001
-                logger.debug("LLM entity extraction failed: %s", exc)
+                logger.info("LLM entity extraction failed: %s", exc)
 
         people_ids = set(insights.people)
         organizations = set(filter(None, insights.organizations))
@@ -149,8 +149,8 @@ def create_memory_agent_graph(
         if llm_entities.get("locations"):
             identified["locations"] = llm_entities["locations"]
 
-        logger.debug("Identified entities: %s", identified)
-        logger.debug("Initial goal: %s", goal)
+        logger.info("Identified entities: %s", identified)
+        logger.info("Initial goal: %s", goal)
         trace = update_reasoning(state, f"Set goal: {goal}")
         if llm_entities:
             trace = update_reasoning({"reasoning_trace": trace}, "Captured entities via LLM analysis")
@@ -229,10 +229,10 @@ def create_memory_agent_graph(
                     if not payload:
                         payload = fallback_payload(name)
                         if payload:
-                            logger.debug("Using fallback payload for LLM-selected tool %s: %s", name, payload)
+                            logger.info("Using fallback payload for LLM-selected tool %s: %s", name, payload)
                     if payload:
                         return {"name": name, "input": payload}
-                    logger.debug("No payload available for LLM-selected tool %s", name)
+                    logger.info("No payload available for LLM-selected tool %s", name)
                     return None
             return None
 
@@ -241,12 +241,12 @@ def create_memory_agent_graph(
                 continue
             payload = builder()
             if payload:
-                logger.debug("Heuristic selected tool %s with payload %s", name, payload)
+                logger.info("Heuristic selected tool %s with payload %s", name, payload)
                 return {"name": name, "input": payload}
         return None
 
     async def plan_queries(state: AgentState) -> AgentState:
-        logger.debug("Planning next query, iteration %s", state.get("iteration"))
+        logger.info("Planning next query, iteration %s", state.get("iteration"))
         llm_reasoning_updates = list(state.get("llm_reasoning", []))
         candidate = determine_tool_from_goal(state)
         if llm and llm.is_available:
@@ -263,7 +263,7 @@ def create_memory_agent_graph(
 
                 if llm_result.get("should_stop"):
                     stop_reason = llm_result.get("stop_reason") or llm_result.get("reasoning")
-                    logger.debug("LLM recommended stopping: %s", stop_reason)
+                    logger.info("LLM recommended stopping: %s", stop_reason)
                     return {
                         "pending_tool": None,
                         "goal_accomplished": True,
@@ -303,7 +303,7 @@ def create_memory_agent_graph(
                             if isinstance(refined_parameters, dict) and refined_parameters:
                                 parameters.update(refined_parameters)
                         except Exception as exc:  # noqa: BLE001
-                            logger.debug("Tool parameter refinement failed: %s", exc)
+                            logger.info("Tool parameter refinement failed: %s", exc)
 
                     # Ensure semantic_search_facts uses max_facts limit
                     if tool_name == "semantic_search_facts" and isinstance(parameters, dict):
@@ -323,7 +323,7 @@ def create_memory_agent_graph(
                     }
 
             except Exception as exc:  # noqa: BLE001
-                logger.debug("LLM planning failed: %s", exc)
+                logger.info("LLM planning failed: %s", exc)
 
         reasoning_message = (
             f"Planned tool {candidate['name']}" if candidate else "No further tool required."
@@ -374,7 +374,7 @@ def create_memory_agent_graph(
                 "reasoning_trace": update_reasoning(state, reasoning_msg),
             }
         facts = normalize_to_facts(tool_name, result)
-        logger.debug("Tool %s returned %d facts", tool_name, len(facts))
+        logger.info("Tool %s returned %d facts", tool_name, len(facts))
 
         meaningful_facts = [fact for fact in facts if fact.fact_type != "CONVERSATION_MENTION"]
 
@@ -418,7 +418,7 @@ def create_memory_agent_graph(
                     state.get("iteration", 0),
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.debug("LLM stop evaluation failed: %s", exc)
+                logger.info("LLM stop evaluation failed: %s", exc)
         if stop_decision and stop_decision.get("should_continue") is False:
             goal_accomplished = True
         reasoning_msg = (
@@ -429,7 +429,7 @@ def create_memory_agent_graph(
         trace = update_reasoning(state, reasoning_msg)
         if stop_decision and stop_decision.get("should_continue") is False:
             trace = update_reasoning({"reasoning_trace": trace}, f"LLM advised stopping: {stop_decision.get('reasoning', 'no reasoning provided')}")
-        logger.debug(
+        logger.info(
             "Goal accomplished: %s after tool call %s",
             goal_accomplished,
             calls[-1] if calls else None,
@@ -463,15 +463,15 @@ def create_memory_agent_graph(
                     try:
                         queries = await llm.extract_message_search_queries(conversation, max_queries=4)
                         if queries:
-                            logger.debug("LLM produced %d message search queries", len(queries))
+                            logger.info("LLM produced %d message search queries", len(queries))
                     except Exception as exc:  # noqa: BLE001
-                        logger.debug("Message query extraction failed: %s", exc)
+                        logger.info("Message query extraction failed: %s", exc)
 
                 if not queries and conversation_text:
                     fallback = conversation_text[-500:]
                     if fallback.strip():
                         queries = [fallback]
-                        logger.debug("Falling back to raw conversation text for message search")
+                        logger.info("Falling back to raw conversation text for message search")
 
                 if queries:
                     try:
@@ -495,11 +495,11 @@ def create_memory_agent_graph(
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Message retrieval failed: %s", exc, exc_info=True)
                 else:
-                    logger.debug("No suitable queries available for message search")
+                    logger.info("No suitable queries available for message search")
             else:
                 logger.warning("semantic_search_messages tool not available")
         else:
-            logger.debug("max_messages is 0, skipping message retrieval")
+            logger.info("max_messages is 0, skipping message retrieval")
 
         # Generate context summary using LLM
         context_summary = await generate_context_summary(

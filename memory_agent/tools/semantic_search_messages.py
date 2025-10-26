@@ -98,7 +98,7 @@ def _load_json_list(value: Any) -> list[dict[str, Any]]:
             if isinstance(parsed, list):
                 return [dict(entry) for entry in parsed]
         except json.JSONDecodeError:
-            logger.debug("Failed to decode JSON payload: %s", value[:80])
+            logger.info("Failed to decode JSON payload: %s", value[:80])
     return []
 
 
