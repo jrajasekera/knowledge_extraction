@@ -80,8 +80,8 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
             self.index_name,
         )
 
-        # Dictionary to store unique results keyed by (person_id, fact_type, fact_object)
-        results_dict: dict[tuple[str, str, str | None], SemanticSearchResult] = {}
+        # Dictionary to store unique results keyed by (person_id, fact_type, fact_object, relationship_type)
+        results_dict: dict[tuple[str, str, str | None, str | None], SemanticSearchResult] = {}
         total_raw_results = 0
         total_filtered_by_threshold = 0
         total_missing_node = 0
@@ -156,11 +156,14 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
                 elif isinstance(attributes_raw, dict):
                     attributes = attributes_raw
 
-                # Create deduplication key
+                # Create deduplication key (includes relationship_type for proper deduplication)
                 person_id = properties.get("person_id", "")
                 fact_type = properties.get("fact_type", "")
                 fact_object = properties.get("fact_object")
-                dedup_key = (person_id, fact_type, fact_object)
+                relationship_type = None
+                if isinstance(attributes, dict):
+                    relationship_type = str(attributes.get("relationship_type")) if attributes.get("relationship_type") else None
+                dedup_key = (person_id, fact_type, fact_object, relationship_type)
 
                 # Use evidence_with_content if available, fallback to evidence IDs
                 evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []

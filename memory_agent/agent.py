@@ -10,7 +10,7 @@ from langgraph.graph import StateGraph, END
 
 from .config import AgentConfig
 from .conversation import extract_insights
-from .fact_formatter import deduplicate_facts, format_facts
+from .fact_formatter import format_facts
 from .llm import LLMClient
 from .models import RetrievalRequest, RetrievedFact
 from .normalization import normalize_to_facts
@@ -68,7 +68,6 @@ class MemoryAgent:
             "reasoning_trace": [],
             "llm_reasoning": [],
             "tool_selection_confidence": "low",
-            "fact_assessments": {},
             "entity_extraction_results": {},
             "should_stop_evaluation": {},
         }
@@ -113,9 +112,6 @@ def create_memory_agent_graph(
         trace = list(state.get("reasoning_trace", []))
         trace.append(message)
         return trace
-
-    def fact_key(fact: RetrievedFact) -> str:
-        return f"{fact.person_id}|{fact.fact_type}|{fact.fact_object or ''}"
 
     async def analyze_conversation(state: AgentState) -> AgentState:
         logger.debug("Analyzing conversation for channel %s", state.get("channel_id"))
@@ -181,8 +177,7 @@ def create_memory_agent_graph(
 
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:
-                # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
-                retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
+                retrieval_limit = state.get("max_facts", config.max_facts)
                 return {"queries": [conversation_text[-500:]], "limit": retrieval_limit}
             return None
 
@@ -220,8 +215,7 @@ def create_memory_agent_graph(
                         return {"person_id": first["id"]}
                 return None
             if tool_name == "semantic_search_facts":
-                # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
-                retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
+                retrieval_limit = state.get("max_facts", config.max_facts)
                 return {"queries": [goal_text], "limit": retrieval_limit}
             return None
 
@@ -308,18 +302,10 @@ def create_memory_agent_graph(
                         except Exception as exc:  # noqa: BLE001
                             logger.debug("Tool parameter refinement failed: %s", exc)
 
-                    # Apply retrieval multiplier for semantic_search_facts
+                    # Ensure semantic_search_facts uses max_facts limit
                     if tool_name == "semantic_search_facts" and isinstance(parameters, dict):
-                        # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
-                        current_limit = parameters.get("limit", 10)
-                        if current_limit < 50:
-                            retrieval_limit = min(state.get("max_facts", config.max_facts) * 3, 50)
-                            parameters["limit"] = retrieval_limit
-                            logger.debug(
-                                "Applied retrieval multiplier: limit %d -> %d",
-                                current_limit,
-                                retrieval_limit,
-                            )
+                        if "limit" not in parameters:
+                            parameters["limit"] = state.get("max_facts", config.max_facts)
 
                     candidate = {"name": tool_name, "input": parameters}
                     reasoning_msg = (
@@ -452,50 +438,12 @@ def create_memory_agent_graph(
         }
 
     async def synthesize(state: AgentState) -> AgentState:
-        facts = deduplicate_facts(state.get("retrieved_facts", []))
-        fact_assessments = dict(state.get("fact_assessments", {}))
-        new_facts: list[tuple[str, RetrievedFact]] = []
-        for fact in facts:
-            key = fact_key(fact)
-            if key not in fact_assessments:
-                new_facts.append((key, fact))
+        # Tools handle their own deduplication, so use facts directly
+        facts = state.get("retrieved_facts", [])
 
-        if new_facts and llm and llm.is_available:
-            conversation_context = "\n".join(
-                f"{message.author_name}: {message.content}"
-                for message in state.get("conversation", [])[-5:]
-            )
-            try:
-                assessments = await llm.batch_assess_facts([fact for _, fact in new_facts], conversation_context)
-                for (key, _fact), assessment in zip(new_facts, assessments, strict=False):
-                    fact_assessments[key] = assessment
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("LLM fact assessment failed: %s", exc)
-
-        filtered_facts: list[RetrievedFact] = []
-        for fact in facts:
-            assessment = fact_assessments.get(fact_key(fact))
-            if assessment:
-                relevance = assessment.get("relevance_score")
-                reliability = assessment.get("reliability_score")
-                should_include = assessment.get("should_include")
-                if isinstance(should_include, bool) and should_include is False:
-                    relevance_ok = relevance is not None and float(relevance) >= 0.4
-                    reliability_ok = reliability is not None and float(reliability) >= 0.4
-                    if not relevance_ok and not reliability_ok:
-                        continue
-                # surface assessment metadata for downstream formatting/debugging
-                fact.attributes = dict(fact.attributes)
-                fact.attributes.setdefault("assessment", {})
-                for key in ("relevance_score", "reliability_score", "should_include", "caveats"):
-                    if key in assessment:
-                        fact.attributes["assessment"][key] = assessment[key]
-            filtered_facts.append(fact)
-
-        formatted = format_facts(filtered_facts)
-        updated_state = dict(state)
-        updated_state["fact_assessments"] = fact_assessments
-        confidence = compute_confidence(filtered_facts, updated_state)
+        # Format facts for output
+        formatted = format_facts(facts)
+        confidence = compute_confidence(facts, state)
         logger.info(
             "Synthesis produced %d formatted facts (confidence=%s)",
             len(formatted),
@@ -507,7 +455,6 @@ def create_memory_agent_graph(
             "formatted_facts": formatted[: state.get("max_facts", config.max_facts)],
             "confidence": confidence,
             "reasoning_trace": trace,
-            "fact_assessments": fact_assessments,
         }
 
     workflow.add_node("analyze_conversation", analyze_conversation)
@@ -573,7 +520,7 @@ def detect_tool_loop(tool_calls: Iterable[dict[str, Any]]) -> bool:
 
 
 def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
-    """Assess overall confidence."""
+    """Assess overall confidence based on fact confidence scores and tool success rate."""
     if not facts:
         return "low"
     confidences = [fact.confidence for fact in facts if fact.confidence is not None]
@@ -584,22 +531,10 @@ def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
     success_count = sum(1 for call in tool_calls if call.get("success"))
     success_rate = success_count / len(tool_calls) if tool_calls else 0.0
 
-    assessments = state.get("fact_assessments", {}) or {}
-    relevance_scores: list[float] = []
-    for assessment in assessments.values():
-        if not assessment or assessment.get("should_include") is False:
-            continue
-        score = assessment.get("relevance_score")
-        if isinstance(score, (int, float)):
-            relevance_scores.append(float(score))
-    avg_relevance = sum(relevance_scores) / len(relevance_scores) if relevance_scores else None
-
     if success_rate >= 0.7 and (high_conf >= 3 or len(facts) >= 5):
-        if avg_relevance is None or avg_relevance >= 0.7:
-            return "high"
+        return "high"
     if success_rate >= 0.4 and (high_conf >= 1 or len(facts) >= 2 or avg_confidence >= 0.6):
-        if avg_relevance is None or avg_relevance >= 0.5:
-            return "medium"
+        return "medium"
     return "low"
 
 
