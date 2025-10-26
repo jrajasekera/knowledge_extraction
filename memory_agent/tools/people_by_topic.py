@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 
 from ..embeddings import EmbeddingProvider
 from .base import ToolBase, ToolError
+from .person_profile import run_read_query
 from .semantic_search import DEFAULT_VECTOR_INDEX
-from .utils import run_read_query, run_vector_query
+from .utils import run_vector_query
 
 
 class FindPeopleByTopicInput(BaseModel):

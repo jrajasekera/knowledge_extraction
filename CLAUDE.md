@@ -177,6 +177,7 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
   - `deduplicate/partitioning.py`: Partition facts by type for parallel processing
 - **`scripts/`**: Utility scripts
   - `scripts/embed_facts.py`: Generates embeddings for facts and maintains `fact_embeddings` vector index
+  - `scripts/embed_messages.py`: Generates embeddings for raw Discord messages (backfills `message_embeddings` index)
   - `scripts/graph_snapshot.py`: Validates materialized facts and reports graph statistics
 - **`deduplicate_facts.py`**: CLI entry point for fact deduplication (hybrid MinHash + embeddings + LLM)
 
@@ -201,6 +202,12 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
 - `EMBEDDING_MODEL`: Model name (default: `google/embeddinggemma-300m`)
 - `EMBEDDING_DEVICE`: Device (default: `cpu`)
 - `EMBEDDING_CACHE_DIR`: Optional cache directory
+
+### Message Embeddings Job
+- `MESSAGE_EMBEDDING_MODEL`: Override model for message embeddings (default: `EMBEDDING_MODEL`)
+- `MESSAGE_EMBEDDING_DEVICE`: Override device for message embeddings (default: `EMBEDDING_DEVICE`)
+- `MESSAGE_EMBEDDING_CACHE_DIR`: Optional cache dir for message jobs (default: `EMBEDDING_CACHE_DIR`)
+- `MESSAGE_EMBEDDING_BATCH_SIZE`: Batch size for `scripts/embed_messages.py` (default: `128`)
 
 ### Memory Agent Service
 - `API_HOST`: FastAPI host (default: `0.0.0.0`)

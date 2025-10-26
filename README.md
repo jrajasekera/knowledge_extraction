@@ -114,6 +114,25 @@ The script will:
 
 Re-run the script whenever facts change or after backfills. The `--cleanup` flag removes embeddings for facts that have been deleted from the graph.
 
+### Message Embedding Maintenance
+
+Raw Discord messages now have their own embedding pipeline and vector index so you can search for verbatim phrasing alongside structured facts:
+
+```bash
+# Populate or refresh :MessageEmbedding nodes
+uv run python scripts/embed_messages.py --cleanup
+
+# Preview embedding work without touching Neo4j
+uv run python scripts/embed_messages.py --dry-run
+```
+
+The job mirrors the fact workflow: it sanitizes message text (channel/topic context + mentions), batches it through the configured embedding model, upserts `:MessageEmbedding` nodes, and (optionally) removes orphaned embeddings. Tunables:
+
+- `MESSAGE_EMBEDDING_MODEL` / `MESSAGE_EMBEDDING_DEVICE` / `MESSAGE_EMBEDDING_CACHE_DIR` – override the model or hardware just for message jobs (defaults to the fact model/device).
+- `MESSAGE_EMBEDDING_BATCH_SIZE` – controls how many messages are embedded per batch (default `128`).
+
+Once populated, the new `semantic_search_messages` tool surfaces high-similarity messages (author, channel, timestamp, permalink) through the memory agent.
+
 ---
 
 ## Data Model

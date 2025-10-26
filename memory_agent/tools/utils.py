@@ -40,6 +40,8 @@ def run_vector_query(
     embedding: list[float],
     limit: int,
     filters: dict[str, Any] | None = None,
+    *,
+    include_evidence: bool = True,
 ) -> list[dict[str, Any]]:
     """Execute a vector index query, applying optional filters client-side."""
     parameters: dict[str, Any] = {
@@ -47,16 +49,23 @@ def run_vector_query(
         "limit": limit,
         "embedding": embedding,
     }
-    query = """
-    CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
-    YIELD node, score
-    WITH node, score, node.evidence AS evidence_ids
-    OPTIONAL MATCH (msg:Message)
-    WHERE msg.id IN evidence_ids
-    WITH node, score,
-         COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp}) AS evidence_with_content
-    RETURN node, score, evidence_with_content
-    """
+    if include_evidence:
+        query = """
+        CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+        YIELD node, score
+        WITH node, score, node.evidence AS evidence_ids
+        OPTIONAL MATCH (msg:Message)
+        WHERE msg.id IN evidence_ids
+        WITH node, score,
+             COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp}) AS evidence_with_content
+        RETURN node, score, evidence_with_content
+        """
+    else:
+        query = """
+        CALL db.index.vector.queryNodes($index_name, $limit, $embedding)
+        YIELD node, score
+        RETURN node, score
+        """
     rows = run_read_query(context, query, parameters)
     if not filters:
         return rows

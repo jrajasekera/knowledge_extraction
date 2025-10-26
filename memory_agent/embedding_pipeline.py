@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Iterable, Sequence
 
 from neo4j import Driver, Session
 
+from .embedding_utils import chunk_iterable, sanitize_array, sanitize_evidence, serialize_attributes
 from .embeddings import EmbeddingProvider
 from .fact_formatter import format_fact_for_embedding_text
 
@@ -36,44 +36,6 @@ class GraphFact:
 
 def _session_kwargs(database: str | None) -> dict[str, str]:
     return {"database": database} if database else {}
-
-
-def _sanitize_property_value(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value]
-    if isinstance(value, dict):
-        return json.dumps(value, sort_keys=True)
-    return str(value)
-
-
-def _serialize_attributes(attributes: dict[str, Any] | None) -> str | None:
-    if not attributes:
-        return None
-    sanitized = {key: _sanitize_property_value(val) for key, val in attributes.items()}
-    return json.dumps(sanitized, sort_keys=True)
-
-
-def _sanitize_array(values: Sequence[Any] | None) -> list[str]:
-    if not values:
-        return []
-    return [str(value) for value in values]
-
-
-def _sanitize_evidence(evidence: Sequence[Any] | None) -> list[str]:
-    if not evidence:
-        return []
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for value in evidence:
-        text = str(value)
-        if text in seen:
-            continue
-        seen.add(text)
-        deduped.append(text)
-    return deduped
 
 
 def ensure_vector_index(session: Session, index_name: str = VECTOR_INDEX_NAME) -> None:
@@ -171,10 +133,10 @@ def generate_embeddings(
                     "person_name": fact.person_name,
                     "fact_type": fact.fact_type,
                     "fact_object": fact.fact_object,
-                    "attributes_json": _serialize_attributes(fact.attributes),
+                    "attributes_json": serialize_attributes(fact.attributes),
                     "confidence": fact.confidence,
-                    "evidence": _sanitize_evidence(fact.evidence),
-                    "target_labels": _sanitize_array(fact.target_labels),
+                    "evidence": sanitize_evidence(fact.evidence),
+                    "target_labels": sanitize_array(fact.target_labels),
                     "text": text,
                     "embedding": embedding,
                 }

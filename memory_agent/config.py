@@ -47,6 +47,16 @@ class EmbeddingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class MessageEmbeddingConfig:
+    """Configuration for the message embedding maintenance job."""
+
+    model: str = "google/embeddinggemma-300m"
+    device: str = "cpu"
+    cache_dir: Path | None = None
+    batch_size: int = 128
+
+
+@dataclass(frozen=True, slots=True)
 class AgentConfig:
     """General agent runtime configuration."""
 
@@ -83,6 +93,7 @@ class Settings:
     neo4j: Neo4jConfig
     llm: LLMConfig
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    message_embeddings: MessageEmbeddingConfig = field(default_factory=MessageEmbeddingConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
     api: APIConfig = field(default_factory=APIConfig)
     rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
@@ -137,6 +148,17 @@ class Settings:
             cache_dir=Path(os.getenv("EMBEDDING_CACHE_DIR")).expanduser() if os.getenv("EMBEDDING_CACHE_DIR") else None,
         )
 
+        default_message_batch = MessageEmbeddingConfig().batch_size
+        message_embeddings = MessageEmbeddingConfig(
+            model=os.getenv("MESSAGE_EMBEDDING_MODEL", embeddings.model),
+            device=os.getenv("MESSAGE_EMBEDDING_DEVICE", embeddings.device),
+            cache_dir=
+                Path(os.getenv("MESSAGE_EMBEDDING_CACHE_DIR")).expanduser()
+                if os.getenv("MESSAGE_EMBEDDING_CACHE_DIR")
+                else embeddings.cache_dir,
+            batch_size=int(os.getenv("MESSAGE_EMBEDDING_BATCH_SIZE", str(default_message_batch))),
+        )
+
         agent = AgentConfig(
             max_iterations=int(os.getenv("MAX_ITERATIONS", "10")),
             max_facts=int(os.getenv("MAX_FACTS", "30")),
@@ -162,6 +184,7 @@ class Settings:
             neo4j=neo4j,
             llm=llm,
             embeddings=embeddings,
+            message_embeddings=message_embeddings,
             agent=agent,
             api=api,
             rate_limit=rate_limit,
