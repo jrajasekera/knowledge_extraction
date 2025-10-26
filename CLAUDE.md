@@ -90,6 +90,32 @@ uv run pytest tests/test_memory_agent_agent.py
 uv run pytest -v
 ```
 
+### Fact Deduplication
+```bash
+# Deduplicate extracted facts using MinHash LSH + embeddings + LLM verification
+uv run python deduplicate_facts.py \
+  --sqlite ./discord.db \
+  --neo4j-password 'test' \
+  --minhash-threshold 0.80 \
+  --embedding-threshold 0.95 \
+  --min-confidence 0.5
+
+# Resume an interrupted deduplication run
+uv run python deduplicate_facts.py --sqlite ./discord.db --neo4j-password 'test' --resume
+
+# Dry run (no changes persisted)
+uv run python deduplicate_facts.py --sqlite ./discord.db --neo4j-password 'test' --dry-run
+```
+
+### Graph Inspection
+```bash
+# Validate materialized facts and get graph statistics
+uv run python scripts/graph_snapshot.py --password 'test'
+
+# Show samples of specific relationship types
+uv run python scripts/graph_snapshot.py --password 'test' --sample-limit 20
+```
+
 ### Data Inspection
 ```bash
 # Check SQLite data
@@ -138,12 +164,21 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
   - `ie/client.py`: llama-server API client
   - `ie/config.py`: 20+ fact type definitions with schemas
   - `ie/advanced_prompts.py`: Enhanced prompt scaffolding
+  - `ie/prompt_assets.json`: Few-shot examples for prompt engineering (update without touching code)
 - **`memory_agent/`**: FastAPI microservice for fact retrieval
   - `memory_agent/app.py`: FastAPI application with `/api/memory/retrieve` endpoint
   - `memory_agent/agent.py`: LangGraph-based agentic retrieval workflow
   - `memory_agent/tools/`: Neo4j-backed retrieval tools (person profile, timeline, semantic search, etc.)
   - `memory_agent/config.py`: Environment-based configuration
-- **`scripts/embed_facts.py`**: Generates embeddings for facts and maintains `fact_embeddings` vector index in Neo4j
+- **`deduplicate/`**: Fact deduplication subsystem
+  - `deduplicate/core.py`: Orchestration and merge logic
+  - `deduplicate/similarity/`: MinHash LSH and embedding-based similarity detection
+  - `deduplicate/llm/`: LLM-powered merge decision making
+  - `deduplicate/partitioning.py`: Partition facts by type for parallel processing
+- **`scripts/`**: Utility scripts
+  - `scripts/embed_facts.py`: Generates embeddings for facts and maintains `fact_embeddings` vector index
+  - `scripts/graph_snapshot.py`: Validates materialized facts and reports graph statistics
+- **`deduplicate_facts.py`**: CLI entry point for fact deduplication (hybrid MinHash + embeddings + LLM)
 
 ## Environment Variables
 
@@ -214,6 +249,14 @@ Each fact in the `fact` table has corresponding `fact_evidence` entries linking 
 ### Pipeline Resumability
 `run_pipeline.py` tracks completion in `pipeline_stage` table, allowing re-runs to skip completed stages. Use `--reset-stage <stage>` to force re-execution.
 
+### Fact Deduplication Pipeline
+`deduplicate_facts.py` uses a three-stage approach:
+1. **MinHash LSH**: Fast candidate detection using character n-grams (default threshold: 0.80 Jaccard similarity)
+2. **Embedding similarity**: Refine candidates using semantic embeddings (default threshold: 0.95 cosine similarity)
+3. **LLM verification**: Final merge decision with confidence scoring and attribute reconciliation
+- Deduplication runs are persisted in `dedup_run` table with resumability support
+- Use `--dry-run` to preview merges without modifying the database or graph
+
 ## File Naming & Organization
 
 - Scripts use `snake_case.py` (e.g., `import_discord_json.py`)
@@ -230,6 +273,18 @@ Each fact in the `fact` table has corresponding `fact_evidence` entries linking 
 4. **IE confidence tuning**: Default threshold is 0.5; increase to 0.7+ for higher precision, lower to 0.3 for recall
 5. **llama-server connection**: Ensure llama-server is running at `LLAMA_BASE_URL` before running IE
 6. **GDS projection timing**: Run `ingest.cql` AFTER `loader.py` has materialized `INTERACTED_WITH` relationships
+7. **Duplicate facts**: After running IE multiple times, use `deduplicate_facts.py` to merge semantically identical facts
+8. **Transformers dependency**: The project uses a specific git revision of transformers for Embedding Gemma support (see `pyproject.toml`)
+
+## Coding Style & Conventions
+
+- Follow PEP 8 with four-space indentation and type hints on all public functions
+- Use `Path` from `pathlib` for filesystem paths (not bare strings)
+- Modules and files use `snake_case`; classes use `PascalCase`; constants are `UPPER_SNAKE_CASE`
+- Prefer Pydantic models (see `ie/models.py`, `memory_agent/models.py`) for structured data
+- Document command-line scripts with module docstrings
+- Add short comments before complex SQL or Cypher operations
+- Keep commit messages imperative and ≤72 chars (e.g., "Handle duplicate facts")
 
 ## Testing Strategy
 
