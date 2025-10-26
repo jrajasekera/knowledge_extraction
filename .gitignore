@@ -16,3 +16,4 @@ wheels/
 data/sample.json
 discord.db
 manual_tests/
+memory_agent_request_logs/
