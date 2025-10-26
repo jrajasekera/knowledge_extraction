@@ -7,6 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+from dotenv import load_dotenv
+
+
+# Load environment variables from a .env file if present.
+load_dotenv()
+
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 ConfidenceLevel = Literal["high", "medium", "low"]
