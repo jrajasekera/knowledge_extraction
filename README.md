@@ -115,7 +115,10 @@ Relationships:
 ## Environment & Setup
 - **Python 3.13**: `pyenv install 3.13.0 && pyenv local 3.13.0`.
 - **Dependency management**: `uv sync` reads `pyproject.toml` / `uv.lock` and installs into the local virtual env.
-- **Secrets**: pass credentials via env vars (`NEO4J_PASSWORD`, `NEO4J_URI`, `LLAMA_API_KEY`, `LLAMA_BASE_URL`, etc.). Never hard-code keys or commit raw exports.
+- **Configuration**: 
+  - Copy `.env.example` to `.env` and configure your environment variables.
+  - Key variables: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `LLAMA_BASE_URL`, `LLAMA_API_KEY`, `EMBEDDING_MODEL`, etc.
+  - The `.env` file is automatically loaded by the application and is gitignored for security.
 - **Execution**: run everything through `uv run ...` so dependencies resolve consistently.
 
 ---

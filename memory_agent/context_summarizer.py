@@ -147,7 +147,7 @@ async def generate_context_summary(
         # Clean up the response
         summary = summary.strip()
 
-        logger.info("Generated context summary: %d characters", len(summary))
+        logger.info("Generated context summary: %s characters", summary)
         return summary
 
     except Exception as exc:
