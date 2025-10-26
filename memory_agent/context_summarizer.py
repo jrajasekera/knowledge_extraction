@@ -67,16 +67,17 @@ def build_context_summary_prompt(
 {messages_section}
 
 ## Instructions
-Generate a concise summary (1-3 paragraphs, max 200 words) that provides historical context for the current conversation.
+Generate a summary (1-3 paragraphs, max 200 words) that provides historical context for the current conversation. \
+Provide as much relevant information as possible while being concise and natural.
 
 **Inclusion Criteria:**
 - Information directly related to topics, people, or events in the current conversation
-- Verified facts that provide essential background
+- Info that provide essential background
 - Messages with unique insights not covered by facts
 
 **Exclusion Criteria:**
 - Off-topic or tangentially related information
-- Ambiguous or unverifiable details
+- Ambiguous details
 - Redundant information already clear from the conversation
 
 **Conflict Resolution:**
