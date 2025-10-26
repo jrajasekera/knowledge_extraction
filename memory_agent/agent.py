@@ -21,12 +21,6 @@ from .tools.base import ToolError
 
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-    logger.addHandler(handler)
-logger.propagate = False
 
 
 class MemoryAgent:
@@ -463,22 +457,45 @@ def create_memory_agent_graph(
             if tool:
                 conversation = state.get("conversation", [])
                 conversation_text = " ".join([msg.content for msg in conversation[-3:]])
-                if conversation_text:
+                queries: list[str] = []
+
+                if llm and conversation:
                     try:
-                        logger.info("Calling semantic_search_messages with limit=%d", max_messages)
-                        search_input = SemanticSearchMessagesInput(
-                            queries=[conversation_text[-500:]],
-                            limit=max_messages,
-                            channel_ids=[state["channel_id"]],
+                        queries = await llm.extract_message_search_queries(conversation, max_queries=4)
+                        if queries:
+                            logger.debug("LLM produced %d message search queries", len(queries))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("Message query extraction failed: %s", exc)
+
+                if not queries and conversation_text:
+                    fallback = conversation_text[-500:]
+                    if fallback.strip():
+                        queries = [fallback]
+                        logger.debug("Falling back to raw conversation text for message search")
+
+                if queries:
+                    try:
+                        channel_id = state.get("channel_id")
+                        filters = [channel_id] if channel_id else None
+                        logger.info(
+                            "Calling semantic_search_messages with %d queries (limit=%d)",
+                            len(queries),
+                            max_messages,
                         )
-                        # Call the tool through __call__ to get proper logging
+                        search_input = SemanticSearchMessagesInput(
+                            queries=queries,
+                            limit=max_messages,
+                            channel_ids=filters,
+                        )
                         result = tool(search_input.model_dump())
                         formatted_messages = format_messages(result.results)
-                        logger.info("Retrieved %d messages from semantic_search_messages", len(formatted_messages))
+                        logger.info(
+                            "Retrieved %d messages from semantic_search_messages", len(formatted_messages)
+                        )
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Message retrieval failed: %s", exc, exc_info=True)
                 else:
-                    logger.debug("No conversation text available for message search")
+                    logger.debug("No suitable queries available for message search")
             else:
                 logger.warning("semantic_search_messages tool not available")
         else:

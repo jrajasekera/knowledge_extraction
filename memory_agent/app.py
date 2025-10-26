@@ -66,17 +66,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.on_event("startup")
     async def on_startup() -> None:
         cfg = app.state.settings
-        
-        # Configure logging for memory_agent modules
+
+        # Configure logging for memory_agent modules.
         import logging
-        log_level = getattr(logging, cfg.api.log_level, logging.INFO)
-        
-        # Set log level for all memory_agent loggers
-        for logger_name in ["memory_agent", "memory_agent.agent", "memory_agent.tools", 
-                            "memory_agent.tools.semantic_search_messages", "memory_agent.tools.semantic_search",
-                            "memory_agent.llm", "memory_agent.context_summarizer"]:
-            logging.getLogger(logger_name).setLevel(log_level)
-        
+
+        log_level_name = (cfg.api.log_level or "INFO").upper()
+        log_level = getattr(logging, log_level_name, logging.INFO)
+
+        # Ensure the root logger has at least one handler so child loggers (like
+        # memory_agent.tools.semantic_search_messages) emit records when running under
+        # uvicorn's default logging config, which otherwise leaves the root handlerless.
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+            root_logger.addHandler(handler)
+        root_logger.setLevel(log_level)
+
+        # Set log level for all memory_agent loggers and make sure they propagate to root.
+        for logger_name in [
+            "memory_agent",
+            "memory_agent.agent",
+            "memory_agent.tools",
+            "memory_agent.tools.semantic_search_messages",
+            "memory_agent.tools.semantic_search",
+            "memory_agent.llm",
+            "memory_agent.context_summarizer",
+        ]:
+            module_logger = logging.getLogger(logger_name)
+            module_logger.setLevel(log_level)
+            module_logger.propagate = True
+
         logger.info("Starting memory agent service with log level: %s", cfg.api.log_level)
         
         driver_kwargs: dict[str, Any] = {"max_connection_lifetime": cfg.neo4j.max_connection_lifetime}

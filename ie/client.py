@@ -36,7 +36,7 @@ class LlamaServerClient:
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "max_tokens": self.config.max_tokens,
-            "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"},
+            "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "high"},
             "cache_prompt": True
         }
         if json_mode:

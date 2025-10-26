@@ -305,6 +305,64 @@ class LLMClient:
                 "implicit_references": [],
             }
 
+    async def extract_message_search_queries(
+        self,
+        messages: list[MessageModel],
+        *,
+        max_queries: int = 4,
+    ) -> list[str]:
+        """Derive diverse search phrases for message retrieval from recent conversation."""
+
+        if not self.is_available or not messages:
+            return []
+
+        capped = max(1, min(max_queries, 5))
+        recent_messages = messages[-5:]
+        conversation_text = "\n".join(
+            f"{msg.author_name}: {msg.content}" for msg in recent_messages
+        )
+
+        prompt = (
+            "You assist with retrieving relevant historical Discord messages via semantic search.\n"
+            "Given the recent conversation, propose several short search queries (keywords or phrases) that a vector search index can use.\n"
+            "Each query should be 1-6 words, capture a distinct angle of the request, and avoid filler like 'search for'.\n\n"
+            "## Recent Conversation\n"
+            f"{conversation_text or 'No recent messages.'}\n\n"
+            "Return JSON only in this format:\n"
+            "{\n"
+            '  "queries": ["keyword or phrase", "..."]\n'
+            "}\n\n"
+            f"Include between 2 and {capped} entries whenever possible."
+        )
+
+        try:
+            response = await asyncio.to_thread(self._llama_predict, prompt)
+            response_clean = self._normalize_json_response(response)
+            parsed = json.loads(response_clean)
+        except Exception:  # noqa: BLE001
+            logger.warning("LLM message query extraction failed", exc_info=True)
+            return []
+
+        candidates = parsed.get("queries") if isinstance(parsed, dict) else None
+        if not isinstance(candidates, list):
+            return []
+
+        cleaned: list[str] = []
+        for raw in candidates:
+            if not isinstance(raw, str):
+                continue
+            text = raw.strip()
+            if not text:
+                continue
+            if text.lower().startswith("query:"):
+                text = text.split(":", 1)[1].strip()
+            if text and text not in cleaned:
+                cleaned.append(text[:120])
+            if len(cleaned) >= capped:
+                break
+
+        return cleaned
+
     async def assess_fact_confidence(
         self,
         fact: RetrievedFact,

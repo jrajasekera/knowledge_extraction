@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import BaseModel
 
 from memory_agent.llm import LLMClient
+from memory_agent.models import MessageModel
 from memory_agent.tools.base import ToolBase, ToolContext
 
 
@@ -70,3 +72,46 @@ async def test_aplan_tool_usage_fallback_when_llm_unavailable():
     assert result["tool_name"] == "semantic_search_facts"
     assert result["parameters"] == {"queries": ["test"]}
     assert result["should_stop"] is False
+
+
+@pytest.mark.asyncio
+async def test_extract_message_search_queries_parses_llm_response():
+    client = LLMClient(model="GLM-4.5-Air", temperature=0.2)
+
+    class DummyLlama:
+        def complete(self, messages, json_mode: bool = False):  # pragma: no cover - simple stub
+            return '{"queries": ["project roadmap", "release blockers", "deployment timeline"]}'
+
+    client._llama_client = DummyLlama()
+
+    messages = [
+        MessageModel(
+            author_id="1",
+            author_name="Alice",
+            content="Can we summarize the deployment blockers for the roadmap?",
+            timestamp=datetime.now(timezone.utc),
+        )
+    ]
+
+    queries = await client.extract_message_search_queries(messages, max_queries=3)
+
+    assert queries == ["project roadmap", "release blockers", "deployment timeline"]
+
+
+@pytest.mark.asyncio
+async def test_extract_message_search_queries_returns_empty_when_unavailable():
+    client = LLMClient(model="GLM-4.5-Air", temperature=0.2)
+    client._llama_client = None
+
+    messages = [
+        MessageModel(
+            author_id="2",
+            author_name="Bob",
+            content="Need context on the metrics discussion",
+            timestamp=datetime.now(timezone.utc),
+        )
+    ]
+
+    queries = await client.extract_message_search_queries(messages)
+
+    assert queries == []
