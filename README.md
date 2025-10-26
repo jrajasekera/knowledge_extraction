@@ -312,14 +312,6 @@ Run `scripts/graph_snapshot.py` to capture a Cypher export for regression testin
 
 ---
 
-## Data & Safety
-- Store raw Discord exports inside `data/` (gitignored) and keep only sanitized fixtures in the repo.
-- SQLite artifacts (`discord.db`) live at the repo root but must not be committed.
-- Use environment variables for all credentials (Neo4j, llama-server, embedding providers). Document overrides in PRs instead of committing .env files.
-- See `docs/` for setup notes (llama-server, profile generation) and keep personal data out of screenshots.
-
----
-
 ## Quickstart
 ```bash
 # 0) Ensure Python 3.13 + deps
@@ -352,7 +344,3 @@ uv run python scripts/embed_messages.py --cleanup
 uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
 ```
 
----
-
-## License
-TBD (private/internal by default). Add an explicit license before distribution.
