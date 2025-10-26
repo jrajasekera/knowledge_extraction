@@ -68,7 +68,8 @@ def build_context_summary_prompt(
 
 ## Instructions
 Generate a summary (1-3 paragraphs, max 200 words) that provides historical context for the current conversation. \
-Provide as much relevant information as possible while being concise and natural.
+Provide as much relevant information as possible while being concise and natural. \
+Focus primarily on the last message in the conversation, but consider the full context.
 
 **Inclusion Criteria:**
 - Information directly related to topics, people, or events in the current conversation

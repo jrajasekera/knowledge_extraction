@@ -143,12 +143,13 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         )
 
         filters: dict[str, Any] = {}
-        if input_data.channel_ids:
-            filters["channel_id"] = input_data.channel_ids
-        if input_data.author_ids:
-            filters["author_id"] = input_data.author_ids
-        if input_data.guild_ids:
-            filters["guild_id"] = input_data.guild_ids
+        # Disable filtering by IDs for now to improve recall
+        # if input_data.channel_ids:
+        #     filters["channel_id"] = input_data.channel_ids
+        # if input_data.author_ids:
+        #     filters["author_id"] = input_data.author_ids
+        # if input_data.guild_ids:
+        #     filters["guild_id"] = input_data.guild_ids
 
         if filters:
             logger.info("Applying filters: %s", filters)

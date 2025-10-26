@@ -555,6 +555,7 @@ class LLMClient:
         state: AgentState,
     ) -> str:
         conversation_summary = self._summarize_conversation(state.get("conversation", []))
+        latest_message = self._latest_message(state.get("conversation", []))
         retrieved_facts_summary = self._summarize_retrieved_facts(state.get("retrieved_facts", []))
         tool_history = self._format_tool_history(state.get("tool_calls", []))
         entities = state.get("identified_entities", {})
@@ -570,8 +571,11 @@ class LLMClient:
             "You are an intelligent planner deciding which knowledge graph tool to call next.\n\n"
             "## Goal\n"
             f"{goal_text or 'Goal unclear.'}\n\n"
-            "## Recent Conversation\n"
+            "## Latest Message (primary intent)\n"
+            f"{latest_message}\n\n"
+            "## Recent Conversation (newest last)\n"
             f"{conversation_summary}\n\n"
+            "Always prioritize the most recent message when determining the next action, using earlier turns only for additional context.\n\n"
             "## Identified Entities\n"
             f"- People: {', '.join(entities.get('people_ids', [])) or 'None'}\n"
             f"- Organizations: {', '.join(entities.get('organizations', [])) or 'None'}\n"
@@ -643,6 +647,15 @@ class LLMClient:
                 content = content[:157] + "..."
             lines.append(f"- {message.author_name}: {content}")
         return "\n".join(lines)
+
+    def _latest_message(self, messages: Sequence[MessageModel]) -> str:
+        if not messages:
+            return "No conversation context available."
+        message = messages[-1]
+        content = message.content.strip()
+        if len(content) > 200:
+            content = content[:197] + "..."
+        return f"{message.author_name}: {content}"
 
     def _summarize_retrieved_facts(self, facts: Sequence[RetrievedFact]) -> str:
         if not facts:
