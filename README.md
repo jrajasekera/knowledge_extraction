@@ -1,480 +1,358 @@
-# Knowledge Extraction from Discord — README
+# Knowledge Extraction from Discord
 
-> Build detailed person + relationship profiles from Discord exports using a hybrid stack: **SQLite (staging/provenance)** → **Neo4j (graph)** → **LLM/NLP extraction** → **graph analytics**.
+> Turn raw Discord exports into a living people + relationship knowledge graph backed by SQLite, Neo4j, and local LLM-powered information extraction.
 
 ---
 
 ## Table of Contents
-
-* [What is this?](#what-is-this)
-* [Architecture](#architecture)
-* [Data Model](#data-model)
-
-  * [SQLite (staging + provenance)](#sqlite-staging--provenance)
-  * [Neo4j (graph)](#neo4j-graph)
-* [Repository layout](#repository-layout)
-* [Getting started](#getting-started)
-
-  * [1) Create the SQLite DB](#1-create-the-sqlite-db)
-  * [2) Import Discord JSON → SQLite](#2-import-discord-json--sqlite)
-  * [3) Load SQLite → Neo4j](#3-load-sqlite--neo4j)
-  * [4) Create a GDS projection](#4-create-a-gds-projection)
-* [Query cookbook (Neo4j/Cypher)](#query-cookbook-neo4jcypher)
-* [Current focus: Ingesting the data](#current-focus-ingesting-the-data)
-* [Roadmap](#roadmap)
-* [Troubleshooting](#troubleshooting)
-* [Performance tips](#performance-tips)
-* [License](#license)
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Data Model](#data-model)
+- [Repository Layout](#repository-layout)
+- [Environment & Setup](#environment--setup)
+- [Running the Pipeline](#running-the-pipeline)
+- [Stage Entry Points](#stage-entry-points)
+- [Information Extraction & Fact Catalogue](#information-extraction--fact-catalogue)
+- [Prompt Scaffolding](#prompt-scaffolding)
+- [Memory Agent Service](#memory-agent-service)
+- [Embedding Jobs](#embedding-jobs)
+- [Query Cookbook](#query-cookbook)
+- [Troubleshooting](#troubleshooting)
+- [Performance Tips](#performance-tips)
+- [Roadmap](#roadmap)
+- [Data & Safety](#data--safety)
+- [Quickstart](#quickstart)
+- [License](#license)
 
 ---
 
-## What is this?
-
-This project turns raw **Discord message exports** into a **knowledge graph** that captures:
-
-* Who the people are (profiles, aliases, roles),
-* Who interacts with whom (reply/mention/reaction patterns → closeness),
-* What topics/events/organizations/places are discussed,
-* When things happen (time-aware edges & provenance).
-
-We keep the original data **lossless** in SQLite (with message-level provenance) and project meaningful entities/relationships into **Neo4j** for analytical queries, community detection, and profile generation.
+## Overview
+This repo ingests exported Discord JSON dumps, stages them losslessly in SQLite, builds an attributed Neo4j graph, runs local LLM information extraction (IE) to capture higher-order signals (work history, education, preferences, relationships, events), and surfaces everything through a retrieval-ready memory service. The `run_pipeline.py` entry point orchestrates ingest → load → IE → fact materialization so you can push new exports end-to-end or resume partially completed runs without reprocessing prior work.
 
 ---
 
 ## Architecture
-
 ```
 Discord JSON exports
         │
         ▼
-   (importer)
-  import_discord_json.py
+import_discord_json.py        (lossless staging + provenance)
         │
         ▼
-SQLite (staging, provenance)
-  - Raw messages, members, roles, reactions, embeds
-  - IE runs, facts, evidence (later stage)
+SQLite (messages, roles, IE runs, facts, evidence)
         │
         ▼
-  loader.py  ──► Neo4j (graph)
-                 - Person, Message, Channel, Guild
-                 - Mentions, Replies, Reactions, Attachments, Embeds
-                 - Derived: INTERACTED_WITH (weights)
-                 - Later: TALKS_ABOUT, WORKS_AT, LIVES_IN, CLOSE_TO…
+loader.py → Neo4j core graph (Person/Message/Channel/Guild/Role + INTERACTED_WITH)
         │
         ▼
- Neo4j GDS analytics + profile generation
- (communities, influence, similarity; LLM narrative)
+run_ie.py / pipeline "ie" stage (windowed llama-server IE, fact tables)
+        │
+        ▼
+facts_to_graph.py (Org/Place/Topic/Event/Skill/etc. nodes + rich relationships)
+        │
+        ▼
+Neo4j GDS analytics, LangGraph memory agent, embeddings, downstream apps
 ```
-
----
-
-## Memory Agent Service
-
-This repository now includes a standalone **memory agent** microservice designed to surface relevant facts from the Neo4j knowledge graph for downstream chat agents. The service exposes a FastAPI application (`memory_agent.app:create_app`) that orchestrates the LangGraph-powered retrieval workflow and a catalog of Neo4j-backed tools.
-
-Start the service locally once your graph is populated:
-
-```bash
-uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
-```
-
-Key endpoints:
-
-* `POST /api/memory/retrieve` – accept recent Discord messages and return formatted fact strings plus confidence + metadata.
-* `POST /api/memory/retrieve/debug` – optional verbose trace (enable via `ENABLE_DEBUG_ENDPOINT=true`).
-* `GET /health` – liveness + dependency checks.
-
-Environment variables cover Neo4j credentials, LLM provider/model, embedding settings, iteration limits, and CORS/rate-limiting controls (see `memory_agent/config.py`).
-
-Use a local llama-server instance by exporting:
-
-```bash
-export LLAMA_BASE_URL=http://localhost:8080/v1/chat/completions  # adjust if needed
-export LLAMA_MODEL=GLM-4.5-Air
-```
-
-Additional knobs (`LLAMA_TEMPERATURE`, `LLAMA_TOP_P`, `LLAMA_MAX_TOKENS`, `LLAMA_TIMEOUT`, `LLAMA_API_KEY`) mirror the defaults used elsewhere in the project.
-
-### Semantic Search Embeddings
-
-For the semantic search tool to return useful results, populate the fact embedding index in Neo4j:
-
-```bash
-# Ensure Neo4j is running and contains materialised fact relationships (factId on edges)
-uv run python scripts/embed_facts.py --cleanup
-```
-
-The script will:
-
-- generate text summaries for each fact-bearing relationship,
-- embed them with the configured sentence-transformers model (`EMBEDDING_MODEL`),
-- upsert `:FactEmbedding` nodes with the vector payload, and
-- create / refresh the `fact_embeddings` vector index (cosine similarity, 768 dims).
-
-Re-run the script whenever facts change or after backfills. The `--cleanup` flag removes embeddings for facts that have been deleted from the graph.
-
-### Message Embedding Maintenance
-
-Raw Discord messages now have their own embedding pipeline and vector index so you can search for verbatim phrasing alongside structured facts:
-
-```bash
-# Populate or refresh :MessageEmbedding nodes
-uv run python scripts/embed_messages.py --cleanup
-
-# Preview embedding work without touching Neo4j
-uv run python scripts/embed_messages.py --dry-run
-```
-
-The job mirrors the fact workflow: it sanitizes message text (channel/topic context + mentions), batches it through the configured embedding model, upserts `:MessageEmbedding` nodes, and (optionally) removes orphaned embeddings. Tunables:
-
-- `MESSAGE_EMBEDDING_MODEL` / `MESSAGE_EMBEDDING_DEVICE` / `MESSAGE_EMBEDDING_CACHE_DIR` – override the model or hardware just for message jobs (defaults to the fact model/device).
-- `MESSAGE_EMBEDDING_BATCH_SIZE` – controls how many messages are embedded per batch (default `128`).
-
-Once populated, the new `semantic_search_messages` tool surfaces high-similarity messages (author, channel, timestamp, permalink) through the memory agent.
+`run_pipeline.py` tracks stage status in `pipeline_run`/`pipeline_stage_state` so you can `--resume` or `--restart` long-running IE or fact-materialization jobs. Each stage records structured details (counts, remaining windows) for easy monitoring.
 
 ---
 
 ## Data Model
-
-### SQLite (staging & provenance)
-
+### SQLite (staging + IE provenance)
 Purpose:
+- Lossless storage of Discord exports (`guild`, `channel`, `member`, `role`, `message`, `reaction`, attachments, embeds, mentions, emoji).
+- Provenance & IE control tables (`import_batch`, `pipeline_run`, `pipeline_stage_state`, `ie_progress`).
+- Structured IE outputs (`fact`, `fact_evidence`, confidence + attributes, `graph_synced_at`).
 
-* Lossless storage of Discord exports.
-* Fast re-ingest & reproducibility.
-* Fact/provenance tables to audit and regenerate graph edges.
+The schema lives in `schema.sql`; helper utilities in `data_structures/ingestion/` provide typed accessors when loading rows.
 
-Key tables:
-
-* `guild`, `channel`, `member`, `role`, `member_role`
-* `message` (+ `message_reference` for replies)
-* `attachment`, `embed`, `embed_image`, `inline_emoji`
-* `emoji`, `reaction`, `reaction_user`
-* `message_mention`
-* `import_batch` (source file & counts)
-* **For LLM/IE (future)**: `ie_run`, `fact`, `fact_evidence`
-
-> Schema is defined in `schema.sql`. It enforces foreign keys and provides useful indices.
-
-### Neo4j (graph)
-
+### Neo4j (graph + embeddings)
 Node labels:
-
-* `Person {id, name, nickname, discriminator, avatarUrl, colorHex, isBot}`
-* `Guild {id, name, iconUrl}`
-* `Channel {id, name, type, category, topic}`
-* `Message {id, content, timestamp, edited, isPinned, type}`
-* `Role {id, name, colorHex, position}`
-* (Later) `Topic`, `Org`, `Place`, `Event`, etc.
+- `Person`, `ExternalPerson`, `Guild`, `Channel`, `Message`, `Role`.
+- IE-derived types: `Org`, `Place`, `Topic`, `Project`, `Skill`, `Event`, `Preference`, `Recommendation`.
+- Vector helpers: `FactEmbedding`, `MessageEmbedding` (populated via the scripts under `scripts/`).
 
 Relationships:
+- Core: `SENT`, `IN_CHANNEL`, `IN_GUILD`, `HAS_ROLE`, `MENTIONS`, `REPLIES_TO`, `REACTED_WITH`, `HAS_ATTACHMENT`, `HAS_EMBED`.
+- Derived interactions: `INTERACTED_WITH {weight}` (mentions + replies).
+- Fact edges: `WORKS_AT`, `STUDIED_AT`, `HAS_SKILL`, `WORKING_ON`, `RELATED_TO`, `ATTENDED_EVENT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`, plus preference/plan edges such as `PREFERS`, `DISLIKES`, `ENJOYS`, `RECOMMENDS`, `AVOIDS`, `PLANS_TO`, `CARES_ABOUT`, `CURIOUS_ABOUT`, `BELIEVES`, `REMEMBERS`, `EXPERIENCED`, `WITNESSED`.
+- Vector similarity support via `fact_embeddings` and `message_embeddings` indexes (cosine, 768 dims by default).
 
-* `(:Person)-[:SENT {ts}]->(:Message)`
-* `(:Message)-[:IN_CHANNEL]->(:Channel)-[:IN_GUILD]->(:Guild)`
-* `(:Message)-[:REPLIES_TO]->(:Message)`
-* `(:Message)-[:MENTIONS]->(:Person)`
-* `(:Message)-[:REACTED_WITH {name,count}]->(:Emoji)`
-* `(:Person)-[:HAS_ROLE]->(:Role)`
-* **Derived**: `(:Person)-[:INTERACTED_WITH {weight}]-(:Person)` (from replies & mentions; adjustable)
-* (Later) `TALKS_ABOUT`, `CLOSE_TO`, `WORKS_AT`, `LIVES_IN`, `ATTENDS`, etc.
+`ingest.cql` defines the GDS projection and constraints for quick graph analytics.
 
 ---
 
-## Repository layout
-
+## Repository Layout
 ```
 .
-├─ schema.sql                # SQLite schema (staging + provenance)
-├─ import_discord_json.py    # Importer: Discord JSON → SQLite
-├─ loader.py                 # Loader: SQLite → Neo4j (nodes/edges + INTERACTED_WITH)
-├─ ingest.cql                # Constraints + GDS graph projection
-├─ sample.json               # Example Discord export (for quick testing)
-└─ README.md                 # This file
+├─ run_pipeline.py            # Orchestrates ingest → load → IE → fact graph with resume support
+├─ import_discord_json.py     # Discord JSON → SQLite staging
+├─ loader.py                  # SQLite → Neo4j core graph + INTERACTED_WITH edges
+├─ run_ie.py                  # Standalone IE runner (window controls, confidence gating)
+├─ facts_to_graph.py          # Materialize IE facts into Neo4j
+├─ deduplicate/               # Utils for cleaning duplicated facts prior to graph writes
+├─ ie/
+│  ├─ advanced_prompts.py     # Prompt scaffolding helpers
+│  ├─ prompt_assets.json      # Few-shot + framing assets editable without touching code
+│  ├─ client.py / runner.py   # llama-server adapter + execution loop
+│  └─ windowing.py            # Channel-ordered streaming windows
+├─ data_structures/ingestion  # Typed domain objects shared by importer/loader/IE
+├─ memory_agent/              # FastAPI service + LangGraph retrieval workflow
+├─ scripts/
+│  ├─ embed_facts.py          # Populate/refresh :FactEmbedding nodes & vector index
+│  ├─ embed_messages.py       # Populate/refresh :MessageEmbedding nodes & index
+│  └─ graph_snapshot.py       # Export Neo4j snapshots for regression checks
+├─ docs/                      # Design notes (llama-server setup, memory agent plans, profiles)
+├─ tests/                     # pytest coverage for core modules
+├─ schema.sql, ingest.cql     # SQLite schema + Neo4j constraints/projection
+├─ data/                      # Place large Discord exports here (gitignored)
+├─ discord.db                 # Local staging DB (not checked in)
+└─ README.md
 ```
 
 ---
 
-## Getting started
-
-### 0) One-shot pipeline
-
-```bash
-python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./data --neo4j-password 'test'
-```
-
-This command applies the schema (idempotently), ingests every `*.json` export under `./data` while skipping files that were already recorded in `import_batch`, and pushes the data into Neo4j at `bolt://localhost:7687`.
-
-By default the pipeline will also:
-
-- Trigger the llama-server IE pass (`GLM-4.5-Air` at `http://localhost:8080/v1/chat/completions`) using window size 4 and store high-confidence facts in SQLite.
-- Materialize those facts into Neo4j via `facts_to_graph.py`, creating `Org`, `Place`, `Topic` nodes and relationship edges such as `WORKS_AT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`.
-
-Use `--no-ie` or `--no-fact-graph` to skip either stage, and tweak IE behaviour with flags such as `--ie-window-size`, `--ie-confidence`, `--llama-model`, etc.
-
-### 1) Create the SQLite DB
-
-```bash
-sqlite3 discord.db < schema.sql
-```
-
-### 2) Import Discord JSON → SQLite
-
-Single file:
-
-```bash
-python import_discord_json.py --db ./discord.db --json ./sample.json
-```
-
-Directory of exports (recurses for `*.json`):
-
-```bash
-python import_discord_json.py --db ./discord.db --json-dir ./exports
-```
-
-What the importer handles:
-
-* Members (incl. `color.hex`, `nickname`, `avatarUrl`, `isBot`)
-* Roles & member-role links
-* Messages (edits, pinned, call-ended timestamp)
-* Replies (message references)
-* Attachments (file sizes, name)
-* Embeds (author, thumbnail, video, images)
-* Inline emojis
-* Mentions (ensures mentioned members exist)
-* Reactions (`emoji`, `reaction`, `reaction_user`)
-* `import_batch` counters
-
-### 3) Load SQLite → Neo4j
-
-Start Neo4j (example with Docker):
-
-```bash
-docker run -p7474:7474 -p7687:7687 -e NEO4J_AUTH=neo4j/test neo4j:5.22
-```
-
-Install Python deps and run the loader:
-
-```bash
-uv pip install neo4j
-python loader.py --sqlite ./discord.db --neo4j bolt://localhost:7687 --user neo4j --password 'test'
-```
-
-What the loader does:
-
-* Creates constraints (`Person`, `Guild`, `Channel`, `Message`, `Role`)
-* Merges guilds, channels, people, roles
-* Loads messages, replies, mentions, reactions, attachments, embeds
-* **Materializes `INTERACTED_WITH`** edges from:
-
-  * Replies (weight **3**)
-  * Mentions (weight **1**)
-  * Symmetrizes A↔B by averaging
-
-> You can tune weights inside `materialize_interactions()` in `loader.py`.
-
-### 4) Create a GDS projection
-
-```bash
-# After loader has created INTERACTED_WITH relationships
-cat ingest.cql | cypher-shell -a bolt://localhost:7687 -u neo4j -p 'test'
-```
-
-This creates a GDS in-memory graph `peopleInteractions` with undirected `INTERACTED_WITH` edges (property: `weight`).
+## Environment & Setup
+- **Python 3.13**: `pyenv install 3.13.0 && pyenv local 3.13.0`.
+- **Dependency management**: `uv sync` reads `pyproject.toml` / `uv.lock` and installs into the local virtual env.
+- **Secrets**: pass credentials via env vars (`NEO4J_PASSWORD`, `NEO4J_URI`, `LLAMA_API_KEY`, `LLAMA_BASE_URL`, etc.). Never hard-code keys or commit raw exports.
+- **Execution**: run everything through `uv run ...` so dependencies resolve consistently.
 
 ---
 
-## Query cookbook (Neo4j/Cypher)
-
-Top interaction partners for a given person:
-
-```cypher
-MATCH (:Person {id:$personId})-[:INTERACTED_WITH]->(p:Person)
-RETURN p.id AS person, p.name AS name, r.weight AS weight
-ORDER BY weight DESC
-LIMIT 10;
+## Running the Pipeline
+One-shot (all stages, resumable):
+```bash
+uv run python run_pipeline.py \
+  --sqlite ./discord.db \
+  --schema ./schema.sql \
+  --json-dir ./data \
+  --neo4j-password "$NEO4J_PASSWORD"
 ```
+Key flags:
+- `--json` or `--json-dir`: input exports (files already recorded in `import_batch` are skipped unless `--no-skip-existing`).
+- `--resume` / `--restart`: continue or replace the most recent `pipeline_run` without re-ingesting.
+- `--ie-window-size`, `--ie-max-windows`, `--ie-max-concurrent-requests`: throttle llama-server load for long chats.
+- `--ie-confidence` & `--fact-confidence`: tune minimum thresholds per stage.
+- `--fact-types`: focus fact materialization on a subset (e.g., `WORKS_AT LIVES_IN`).
+- `--no-ie`, `--no-fact-graph`: skip downstream stages if you only need raw ingest or the core interaction graph.
 
-People in the same guild & channel activity:
-
-```cypher
-MATCH (p:Person)-[:SENT]->(:Message)-[:IN_CHANNEL]->(c:Channel)-[:IN_GUILD]->(g:Guild {id:$guildId})
-RETURN p.name AS person, c.name AS channel, count(*) AS msgs
-ORDER BY msgs DESC
-LIMIT 20;
-```
-
-Reply chains (who replies to whom the most):
-
-```cypher
-MATCH (a:Person)-[:SENT]->(m2:Message)-[:REPLIES_TO]->(m1:Message)<-[:SENT]-(b:Person)
-RETURN b.name AS from, a.name AS to, count(*) AS replies
-ORDER BY replies DESC
-LIMIT 20;
-```
-
-Mentions received:
-
-```cypher
-MATCH (a:Person)-[:SENT]->(m:Message)-[:MENTIONS]->(b:Person)
-RETURN b.name AS mentioned, count(*) AS times
-ORDER BY times DESC
-LIMIT 20;
-```
+Stage progress, details, and timestamps persist in SQLite so partially completed IE runs can be paused (Ctrl+C) and resumed without losing processed windows.
 
 ---
 
-## Current focus: Ingesting the data
+## Stage Entry Points
+### 1. Import Discord JSON → SQLite
+```bash
+uv run python import_discord_json.py --db ./discord.db --json-dir ./data
+```
+- Recurses through `*.json`, deduplicates via `import_batch`, enforces foreign keys, and captures roles, reactions, embeds, attachments, mentions, and inline emoji.
+- Use `--json` for single files and `--no-skip-existing` to force re-import.
 
-We’re currently focused on **robust ingestion**:
+### 2. Load SQLite → Neo4j
+```bash
+uv run python loader.py \
+  --sqlite ./discord.db \
+  --neo4j bolt://localhost:7687 \
+  --user neo4j \
+  --password "$NEO4J_PASSWORD"
+```
+- Merges core nodes/edges, creates constraints, and materializes symmetric `INTERACTED_WITH` edges (reply weight 3, mention weight 1 by default; adjust inside `materialize_interactions`).
 
-1. **Import Discord JSON → SQLite**
-   `import_discord_json.py` ensures *lossless* capture of messages, replies, mentions, reactions, embeds, attachments, and roles, with batch-level provenance in `import_batch`.
+### 3. IE (windowed llama-server extraction)
+```bash
+uv run python run_ie.py \
+  --sqlite ./discord.db \
+  --window-size 6 \
+  --confidence-threshold 0.6 \
+  --llama-url "$LLAMA_BASE_URL" \
+  --llama-model "$LLAMA_MODEL"
+```
+- Streams chronological windows per channel/guild, calls llama-server via `ie/client.py`, validates output against `ie/models.py`, and writes into `fact` / `fact_evidence`. Resume by re-running with `--resume`.
 
-2. **Load SQLite → Neo4j**
-   `loader.py` merges core entities/edges and computes **`INTERACTED_WITH`** edges based on replies and mentions so we can immediately run community & influence analyses.
-
-**Once ingestion is solid**, we’ll:
-
-* Add an **IE (information extraction)** pass to populate `fact` and `fact_evidence` (WORKS_AT, LIVES_IN, TALKS_ABOUT, CLOSE_TO, etc.).
-* Materialize those facts into Neo4j edges (with provenance & confidence).
-* Generate readable **profiles** with citations back to `message_id`s.
+### 4. Materialize facts → Neo4j
+```bash
+uv run python facts_to_graph.py \
+  --sqlite ./discord.db \
+  --password "$NEO4J_PASSWORD" \
+  --min-confidence 0.55
+```
+- Handles education, skills, projects, relationships, events, preferences, recommendations, and avoidance facts. Marks processed facts with `graph_synced_at` to keep Neo4j in sync.
 
 ---
 
-## Information Extraction (IE)
+## Information Extraction & Fact Catalogue
+IE runs inside `ie/` combine:
+- **Windowing** (`ie/windowing.py`): deterministic channel-ordered sliding windows with per-guild/per-author filters.
+- **Prompting** (`ie/advanced_prompts.py`, `ie/prompt_assets.json`): reusable scaffolding + JSON assets for few-shots and rubric tweaks without code changes.
+- **Runner** (`ie/runner.py`): concurrency limits, retries, confidence gating, and SQLite persistence.
 
-IE uses a local `llama.cpp`/`llama-server` deployment (OpenAI-compatible API) to convert message windows into structured facts stored in SQLite (`fact` + `fact_evidence`) before being materialized back into Neo4j.
+Current fact coverage (see `ie/types.py` for the canonical list):
 
-### Initial fact catalogue
+| Category | Fact types | Graph targets |
+| --- | --- | --- |
+| Work & Education | `WORKS_AT`, `STUDIED_AT`, `PREVIOUSLY` | `(:Person)-[:WORKS_AT]->(:Org)` and `(:Person)-[:STUDIED_AT]->(:Org {type:'School'})` with role/location/dates. |
+| Skills & Projects | `HAS_SKILL`, `WORKING_ON` | `Person` → `Skill` / `Project` nodes including proficiency, scope, and timeframe attributes. |
+| Relationships & Memory | `CLOSE_TO`, `RELATED_TO`, `REMEMBERS` | Weighted `Person`↔`Person` edges with relationship basis + evidence arrays. |
+| Topics & Beliefs | `TALKS_ABOUT`, `CARES_ABOUT`, `CURIOUS_ABOUT`, `BELIEVES` | `Person` → `Topic` edges capturing sentiment, rationale, and confidence. |
+| Location & Events | `LIVES_IN`, `ATTENDED_EVENT`, `WITNESSED`, `EXPERIENCED` | `Person` → `Place` / `Event` nodes with normalized timestamps and context. |
+| Preferences & Plans | `PREFERS`, `DISLIKES`, `ENJOYS`, `PLANS_TO` | `Person` → `Preference` nodes describing likes/dislikes and future intent. |
+| Recommendations & Warnings | `RECOMMENDS`, `AVOIDS` | `Person` → `Recommendation` nodes detailing endorsements or cautions with reasons. |
 
-| Fact type   | Subject                         | Object / target               | Key attributes (required **bold**)                   | Purpose |
-|-------------|----------------------------------|-------------------------------|------------------------------------------------------|---------|
-| `WORKS_AT`  | Discord member                   | Organization / company        | **organization**, role, location, start_date, end_date | Org graph + profile context |
-| `LIVES_IN`  | Discord member                   | Place / region                | **location**, since                                   | Geo clustering |
-| `TALKS_ABOUT` | Discord member                 | Topic / project               | **topic**, sentiment                                  | Interest detection |
-| `CLOSE_TO`  | Discord member (Person A)        | Discord member (Person B)     | closeness_basis                                       | Strengthen relationship edges |
+Each fact stores structured attributes (organization, role, since/until, sentiment basis, etc.), a confidence score, and evidence message IDs. `facts_to_graph.py` sanitizes values, ensures people/org nodes exist, and deduplicates evidence before writing graph relationships.
 
-Facts below a configurable confidence threshold are discarded before graph materialization. Evidence (message IDs) is recorded in `fact_evidence` for traceability.
+---
 
-> Tip: populate `member.official_name` in SQLite (`UPDATE member SET official_name='John Smith' WHERE id='...';`) so the IE prompts can disambiguate real names from Discord handles.
+## Prompt Scaffolding
+- Edit **few-shots & rubrics** in `ie/prompt_assets.json`; they are loaded at runtime without code changes.
+- Extend or override prompt templates in `ie/advanced_prompts.py` to add new fact families.
+- Domain objects in `data_structures/ingestion/models.py` keep serialization consistent when swapping models/providers.
 
-### Windowing scaffolding
+---
 
-`ie/windowing.py` streams channel-ordered message windows (default size 4) so the IE runner can provide the language model with short conversational context while preserving provenance. You can narrow extraction to specific guilds/channels/authors or cap the number of windows for testing.
+## Memory Agent Service
+`memory_agent/` contains a FastAPI application that turns the Neo4j graph into LangGraph-powered retrieval tools consumable by downstream chat agents.
 
-### Usage
+Run locally after facts & embeddings are populated:
+```bash
+uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
+```
+Endpoints:
+- `POST /api/memory/retrieve`: main entry point returning stitched fact summaries, supporting metadata, and confidence values.
+- `POST /api/memory/retrieve/debug`: verbose trace when `ENABLE_DEBUG_ENDPOINT=true`.
+- `GET /health`: dependency liveness (Neo4j, embedding indexes, llama-server reachability).
 
-- Run the pipeline end-to-end (ingest → IE → fact materialization):
+Environment toggles (see `memory_agent/config.py`): Neo4j credentials/URIs, llama/embedding providers, per-tool limits, timeouts, rate limiting, and optional tracing.
 
-  ```bash
-  python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./exports --neo4j-password 'test'
+The service automatically calls the **semantic fact** and **message** search tools when embeddings are available. See `docs/memory_agent_*` for architectural notes and prompt evolution plans.
+
+---
+
+## Embedding Jobs
+Populate or refresh vector indexes whenever facts or messages change:
+```bash
+# Fact embeddings (used by semantic_search_facts tool)
+uv run python scripts/embed_facts.py --cleanup
+
+# Message embeddings (search verbatim phrasing alongside structured facts)
+uv run python scripts/embed_messages.py --cleanup
+```
+Both scripts:
+- Sanitize text payloads with channel/person context.
+- Use the configured sentence-transformers model (`EMBEDDING_MODEL` / `MESSAGE_EMBEDDING_MODEL`).
+- Batch requests (`MESSAGE_EMBEDDING_BATCH_SIZE` defaults to 128).
+- Upsert `:FactEmbedding` / `:MessageEmbedding` nodes and rebuild the associated vector index (cosine similarity, 768 dims by default).
+- Accept `--dry-run` to preview work without touching Neo4j.
+
+Run `scripts/graph_snapshot.py` to capture a Cypher export for regression testing before/after IE changes.
+
+---
+
+## Query Cookbook
+- **Top interaction partners**
+  ```cypher
+  MATCH (:Person {id:$personId})-[r:INTERACTED_WITH]->(p:Person)
+  RETURN p.name AS name, r.weight AS weight
+  ORDER BY weight DESC
+  LIMIT 10;
   ```
-
-- Rerun just the IE stage (adjust thresholds/window size as needed):
-
-  ```bash
-  python run_ie.py --sqlite ./discord.db --window-size 6 --confidence-threshold 0.6
+- **Guild + channel activity**
+  ```cypher
+  MATCH (p:Person)-[:SENT]->(:Message)-[:IN_CHANNEL]->(c:Channel)-[:IN_GUILD]->(g:Guild {id:$guild})
+  RETURN p.name, c.name, count(*) AS msgs
+  ORDER BY msgs DESC LIMIT 20;
   ```
-
-- Rematerialize facts into Neo4j without re-ingesting data:
-
-  ```bash
-  python facts_to_graph.py --sqlite ./discord.db --password 'test' --min-confidence 0.6
-  ```
-
-### Verifying results
-
-- Inspect extracted facts in SQLite:
-
-  ```bash
-  sqlite3 ./discord.db "SELECT type, subject_id, object_id, json_extract(attributes, '$.organization'), confidence FROM fact ORDER BY confidence DESC LIMIT 10;"
-  ```
-
-- Confirm Neo4j relationships:
-
+- **Work history rollup**
   ```cypher
   MATCH (p:Person)-[r:WORKS_AT]->(o:Org)
-  RETURN p.name, o.name, r.role, r.confidence, r.evidence
-  ORDER BY r.confidence DESC LIMIT 10;
+  RETURN p.name, o.name, r.role, r.location, r.confidence
+  ORDER BY r.confidence DESC LIMIT 15;
   ```
-
----
-
-## Roadmap
-
-* [x] SQLite schema (`schema.sql`)
-* [x] Importer: Discord JSON → SQLite (`import_discord_json.py`)
-* [x] Loader: SQLite → Neo4j (`loader.py`)
-* [x] GDS projection (`ingest.cql`)
-* [ ] IE pass: windowed extraction to `fact`/`fact_evidence` (Pydantic schema + local LLM)
-* [ ] “facts_to_graph.py”: materialize `WORKS_AT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`
-* [ ] Profile generator: aggregate facts & graph signals → LLM narrative w/ evidence pointers
-* [ ] Streamlit dashboard (people, communities, topics over time)
-* [ ] Privacy controls (per-person redaction / “forget me”, sensitive-topic filters)
+- **Skill graph**
+  ```cypher
+  MATCH (p:Person)-[:HAS_SKILL]->(s:Skill)
+  RETURN s.name AS skill, collect(p.name)[0..5] AS sample_people, count(*) AS holders
+  ORDER BY holders DESC;
+  ```
+- **Preferences & recommendations**
+  ```cypher
+  MATCH (p:Person)-[r:PREFERS|RECOMMENDS]->(t)
+  RETURN labels(t)[0] AS type, t.name AS target, collect(p.name)[0..3] AS advocates
+  ORDER BY size(advocates) DESC;
+  ```
 
 ---
 
 ## Troubleshooting
-
-**Neo4j driver error: “Expected exactly one statement per query but got: N”**
-
-* The driver requires a single statement per `session.run()`. `loader.py`’s `materialize_interactions()` already splits the delete and build steps into two runs.
-
-**Download links not working in your environment**
-
-* If you’re missing files, copy from this README or use the setup script pattern in your shell to create/overwrite the files.
-
-**Foreign key errors in SQLite**
-
-* Ensure `PRAGMA foreign_keys = ON;` (the importer sets this).
-* Insert order is handled by the importer (guild/channel/members → messages → children).
-
-**Empty graph**
-
-* Confirm the importer actually loaded messages (`SELECT count(*) FROM message;`).
-* Ensure `loader.py` ran without errors and check for `Message` and `SENT` relationships in Neo4j Browser.
+- **Foreign key errors**: ensure `PRAGMA foreign_keys = ON;` (the importer sets this) and run `sqlite3 ./discord.db "SELECT count(*) FROM message;"` to confirm ingest.
+- **Neo4j driver complaining about multiple statements**: loader already separates Cypher statements; check for custom Cypher you injected elsewhere.
+- **Pipeline stalled mid-IE**: rerun `uv run python run_pipeline.py --resume --neo4j-password "$NEO4J_PASSWORD" ...` to pick up remaining windows; see `pipeline_stage_state.details` (JSON) for queue length.
+- **Embeddings out of sync**: rerun `embed_facts.py --cleanup` or `embed_messages.py --cleanup` to rebuild indexes after deleting facts/messages.
 
 ---
 
-## Performance tips
+## Performance Tips
+- Ingest large exports in batches; the importer deduplicates via `import_batch` so you can safely re-run.
+- For massive Neo4j loads, increase Docker memory + page cache and consider running loader with `NEO4J_MAX_CONNECTION_POOL_SIZE` tuned higher.
+- Temporarily disable llama-server streaming if CPU bound; `--ie-max-concurrent-requests` throttles concurrency.
+- Use `scripts/graph_snapshot.py` before/after IE prompt tweaks to confirm relationship deltas.
 
-* Import in **batches** (default fetch sizes are reasonable in `loader.py`).
-* Add more indices if you filter on time (`message.timestamp`) heavily.
-* For very large exports, consider:
+---
 
-  * Running Neo4j in Docker with increased memory,
-  * Temporarily disabling logging,
-  * Using periodic `apoc.periodic.iterate` (if APOC is enabled) for massive merges.
+## Roadmap
+- [x] SQLite schema + importer with provenance tracking
+- [x] Neo4j loader + interaction graph + GDS projection
+- [x] Windowed IE runner (Pydantic validation, resume support, llama-server client)
+- [x] Fact materialization covering education, skills, relationships, events, preferences, and memory cues
+- [x] LangGraph-powered memory agent + semantic search embeddings
+- [ ] Profile generator: combine facts + graph metrics + evidence into narrative dossiers
+- [ ] Streamlit/Notebooks for people/topic exploration and fact QA
+- [ ] Privacy controls (per-person redaction, “forget me” requests, sensitive topic filters)
+- [ ] Automated eval harness for IE prompts + embedding relevance (gold fixtures in `tests/`)
+
+---
+
+## Data & Safety
+- Store raw Discord exports inside `data/` (gitignored) and keep only sanitized fixtures in the repo.
+- SQLite artifacts (`discord.db`) live at the repo root but must not be committed.
+- Use environment variables for all credentials (Neo4j, llama-server, embedding providers). Document overrides in PRs instead of committing .env files.
+- See `docs/` for setup notes (llama-server, profile generation) and keep personal data out of screenshots.
+
+---
+
+## Quickstart
+```bash
+# 0) Ensure Python 3.13 + deps
+pyenv install 3.13.0
+pyenv local 3.13.0
+uv sync
+
+# 1) Apply schema (idempotent)
+uv run python - <<'PY'
+from pathlib import Path
+from run_pipeline import apply_schema
+apply_schema(Path('discord.db'), Path('schema.sql'))
+PY
+
+# 2) Import Discord exports
+uv run python import_discord_json.py --db ./discord.db --json-dir ./data
+
+# 3) Start Neo4j locally
+docker run -p7474:7474 -p7687:7687 -e NEO4J_AUTH=neo4j/test neo4j:5.22
+
+# 4) Load SQLite → Neo4j
+uv run python loader.py --sqlite ./discord.db --neo4j bolt://localhost:7687 --user neo4j --password 'test'
+
+# 5) Run IE + fact materialization (optionally through run_pipeline)
+uv run python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./data --neo4j-password 'test'
+
+# 6) Populate embeddings + start memory agent
+uv run python scripts/embed_facts.py --cleanup
+uv run python scripts/embed_messages.py --cleanup
+uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
+```
 
 ---
 
 ## License
-
-Choose a license and put it here (e.g., MIT). If this is private/internal, state that clearly.
-
----
-
-### Quickstart (copy/paste)
-
-```bash
-# 1) Create DB
-sqlite3 discord.db < schema.sql
-
-# 2) Import JSON (single file or directory)
-python import_discord_json.py --db ./discord.db --json ./data/sample.json
-# or
-python import_discord_json.py --db ./discord.db --json-dir ./exports
-
-# 3) Start Neo4j
-docker run -p7474:7474 -p7687:7687 -e NEO4J_AUTH=neo4j/test neo4j:5.22
-
-# 4) Load SQLite -> Neo4j
-uv pip install neo4j
-python loader.py --sqlite ./discord.db --neo4j bolt://localhost:7687 --user neo4j --password 'test'
-
-# 5) GDS projection
-cat ingest.cql | cypher-shell -a bolt://localhost:7687 -u neo4j -p 'test'
-```
-
-That’s the full pipeline. When you’re ready, I can add the **facts_to_graph** step and a first **profile generator** pass.
+TBD (private/internal by default). Add an explicit license before distribution.
