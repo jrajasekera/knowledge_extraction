@@ -124,6 +124,41 @@ class LLMClient:
             return self._llama_predict(prompt)
         return self._fallback(prompt)
 
+    async def agenerate_text(self, prompt: str, system_message: str | None = None) -> str:
+        """Generate text using the LLM without tool-specific formatting.
+        
+        This method is suitable for general text generation tasks like summarization,
+        unlike apredict/predict which are optimized for tool selection.
+        
+        Args:
+            prompt: The user prompt
+            system_message: Optional custom system message. If None, uses a general assistant message.
+            
+        Returns:
+            Generated text response
+        """
+        if self._llama_client is None:
+            logger.debug("LLM client unavailable for text generation")
+            return ""
+        
+        default_system = "You are a helpful AI assistant."
+        messages = [
+            {"role": "system", "content": system_message or default_system},
+            {"role": "user", "content": prompt},
+        ]
+        
+        try:
+            response = self._llama_client.complete(messages, json_mode=False)
+            return response if response else ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLM text generation failed: %s", exc)
+            return ""
+
+    def generate_text(self, prompt: str, system_message: str | None = None) -> str:
+        """Synchronous version of agenerate_text."""
+        import asyncio
+        return asyncio.run(self.agenerate_text(prompt, system_message))
+
     def _llama_predict(self, prompt: str) -> str:
         if self._llama_client is None:
             return self._fallback(prompt)

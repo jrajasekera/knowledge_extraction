@@ -65,8 +65,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.on_event("startup")
     async def on_startup() -> None:
-        logger.info("Starting memory agent service")
         cfg = app.state.settings
+        
+        # Configure logging for memory_agent modules
+        import logging
+        log_level = getattr(logging, cfg.api.log_level, logging.INFO)
+        
+        # Set log level for all memory_agent loggers
+        for logger_name in ["memory_agent", "memory_agent.agent", "memory_agent.tools", 
+                            "memory_agent.tools.semantic_search_messages", "memory_agent.tools.semantic_search",
+                            "memory_agent.llm", "memory_agent.context_summarizer"]:
+            logging.getLogger(logger_name).setLevel(log_level)
+        
+        logger.info("Starting memory agent service with log level: %s", cfg.api.log_level)
+        
         driver_kwargs: dict[str, Any] = {"max_connection_lifetime": cfg.neo4j.max_connection_lifetime}
         if cfg.neo4j.encrypted:
             driver_kwargs["encrypted"] = True

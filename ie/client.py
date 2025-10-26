@@ -29,17 +29,18 @@ class LlamaServerClient:
     def close(self) -> None:
         self._client.close()
 
-    def complete(self, messages: Iterable[dict[str, Any]]) -> str | None:
+    def complete(self, messages: Iterable[dict[str, Any]], json_mode: bool = True) -> str | None:
         payload = {
             "model": self.config.model,
             "messages": list(messages),
             "temperature": self.config.temperature,
             "top_p": self.config.top_p,
             "max_tokens": self.config.max_tokens,
-            "response_format": {"type": "json_object"},
             "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "low"},
             "cache_prompt": True
         }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         response = self._client.post(self.config.base_url, content=json.dumps(payload))
         response.raise_for_status()
         data = response.json()

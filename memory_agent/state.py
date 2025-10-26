@@ -38,6 +38,7 @@ class AgentState(TypedDict, total=False):
     # Output data
     formatted_facts: list[str]
     formatted_messages: list[str]
+    context_summary: str | None
     confidence: str
     metadata: dict[str, Any]
     reasoning_trace: list[str]

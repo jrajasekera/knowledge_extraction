@@ -60,6 +60,7 @@ class MemoryAgent:
             "retrieved_facts": [],
             "retrieved_messages": [],
             "formatted_messages": [],
+            "context_summary": None,
             "tool_calls": [],
             "iteration": 0,
             "current_goal": None,
@@ -94,6 +95,7 @@ class MemoryAgent:
         result: dict[str, Any] = {
             "facts": final_state.get("formatted_facts", []),
             "messages": final_state.get("formatted_messages", []),
+            "context_summary": final_state.get("context_summary", ""),
             "confidence": final_state.get("confidence", "low"),
             "metadata": metadata,
         }
@@ -445,6 +447,7 @@ def create_memory_agent_graph(
         }
 
     async def synthesize(state: AgentState) -> AgentState:
+        from .context_summarizer import generate_context_summary
         from .message_formatter import format_messages
         from .tools.semantic_search_messages import SemanticSearchMessagesInput
 
@@ -462,18 +465,33 @@ def create_memory_agent_graph(
                 conversation_text = " ".join([msg.content for msg in conversation[-3:]])
                 if conversation_text:
                     try:
+                        logger.info("Calling semantic_search_messages with limit=%d", max_messages)
                         search_input = SemanticSearchMessagesInput(
                             queries=[conversation_text[-500:]],
                             limit=max_messages,
                             channel_ids=[state["channel_id"]],
                         )
-                        result = tool.run(search_input)
+                        # Call the tool through __call__ to get proper logging
+                        result = tool(search_input.model_dump())
                         formatted_messages = format_messages(result.results)
-                        logger.info("Retrieved %d messages", len(formatted_messages))
+                        logger.info("Retrieved %d messages from semantic_search_messages", len(formatted_messages))
                     except Exception as exc:  # noqa: BLE001
-                        logger.error("Message retrieval failed: %s", exc)
+                        logger.error("Message retrieval failed: %s", exc, exc_info=True)
+                else:
+                    logger.debug("No conversation text available for message search")
             else:
                 logger.warning("semantic_search_messages tool not available")
+        else:
+            logger.debug("max_messages is 0, skipping message retrieval")
+
+        # Generate context summary using LLM
+        context_summary = await generate_context_summary(
+            llm=llm,
+            conversation=state.get("conversation", []),
+            formatted_facts=formatted[: state.get("max_facts", config.max_facts)],
+            formatted_messages=formatted_messages[:max_messages],
+        )
+        logger.info("Generated context summary: %d characters", len(context_summary))
 
         confidence = compute_confidence(facts, state)
         logger.info(
@@ -487,6 +505,7 @@ def create_memory_agent_graph(
         return {
             "formatted_facts": formatted[: state.get("max_facts", config.max_facts)],
             "formatted_messages": formatted_messages[:max_messages],
+            "context_summary": context_summary,
             "confidence": confidence,
             "reasoning_trace": trace,
         }

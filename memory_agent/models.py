@@ -71,6 +71,7 @@ class RetrievalResponse(BaseModel):
 
     facts: list[str]
     messages: list[str]
+    context_summary: str
     confidence: ConfidenceLevel
     metadata: RetrievalMetadata
 
