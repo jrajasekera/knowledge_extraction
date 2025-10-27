@@ -118,6 +118,14 @@ class Settings:
             return ()
         return tuple(item.strip() for item in raw.split(",") if item.strip())
 
+    @staticmethod
+    def _str_env(key: str) -> str | None:
+        raw = os.getenv(key)
+        if raw is None:
+            return None
+        stripped = raw.strip()
+        return stripped or None
+
     @classmethod
     def from_env(cls) -> "Settings":
         """Load configuration values from the environment."""
@@ -148,19 +156,25 @@ class Settings:
             timeout=timeout,
         )
 
+        embedding_model = cls._str_env("EMBEDDING_MODEL") or "google/embeddinggemma-300m"
+        embedding_device = cls._str_env("EMBEDDING_DEVICE") or "cpu"
+        embedding_cache = cls._str_env("EMBEDDING_CACHE_DIR")
         embeddings = EmbeddingConfig(
-            model=os.getenv("EMBEDDING_MODEL", "google/embeddinggemma-300m"),
-            device=os.getenv("EMBEDDING_DEVICE", "cpu"),
-            cache_dir=Path(os.getenv("EMBEDDING_CACHE_DIR")).expanduser() if os.getenv("EMBEDDING_CACHE_DIR") else None,
+            model=embedding_model,
+            device=embedding_device,
+            cache_dir=Path(embedding_cache).expanduser() if embedding_cache else None,
         )
 
         default_message_batch = MessageEmbeddingConfig().batch_size
+        message_model = cls._str_env("MESSAGE_EMBEDDING_MODEL") or embeddings.model
+        message_device = cls._str_env("MESSAGE_EMBEDDING_DEVICE") or embeddings.device
+        message_cache_raw = cls._str_env("MESSAGE_EMBEDDING_CACHE_DIR")
         message_embeddings = MessageEmbeddingConfig(
-            model=os.getenv("MESSAGE_EMBEDDING_MODEL", embeddings.model),
-            device=os.getenv("MESSAGE_EMBEDDING_DEVICE", embeddings.device),
+            model=message_model,
+            device=message_device,
             cache_dir=
-                Path(os.getenv("MESSAGE_EMBEDDING_CACHE_DIR")).expanduser()
-                if os.getenv("MESSAGE_EMBEDDING_CACHE_DIR")
+                Path(message_cache_raw).expanduser()
+                if message_cache_raw
                 else embeddings.cache_dir,
             batch_size=int(os.getenv("MESSAGE_EMBEDDING_BATCH_SIZE", str(default_message_batch))),
         )

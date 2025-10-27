@@ -23,7 +23,7 @@ MAX_EXCERPT_LENGTH = 240
 class SemanticSearchMessagesInput(BaseModel):
     """Inputs for semantic_search_messages."""
 
-    queries: list[str] = Field(min_length=1, max_length=5)
+    queries: list[str] = Field(min_length=1, max_length=10)
     limit: int = Field(default=10, ge=1, le=50)
     similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     channel_ids: list[str] | None = None

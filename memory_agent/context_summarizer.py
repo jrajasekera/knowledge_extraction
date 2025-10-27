@@ -57,18 +57,10 @@ def build_context_summary_prompt(
 
     prompt = f"""Analyze the conversation below and provide relevant historical context using the retrieved facts and messages.
 
-## Current Conversation
-{conversation}
-
-## Retrieved Facts
-{facts_section}
-
-## Retrieved Messages
-{messages_section}
-
 ## Instructions
-Generate a summary (1-3 paragraphs, max 200 words) that provides historical context for the current conversation. \
+Generate a response (1-5 paragraphs, max 1000 words) that provides historical context for the current conversation. \
 Provide as much relevant information as possible while being concise and natural. \
+Include direct quotes or references from the facts and messages when appropriate. \
 Focus primarily on the last message in the conversation, but consider the full context.
 
 **Inclusion Criteria:**
@@ -93,7 +85,54 @@ Focus primarily on the last message in the conversation, but consider the full c
 - Avoid jargon unless used in the conversation
 - Focus on: people mentioned, related past events, and clarifying context
 
-Provide only the summary without preamble or meta-commentary.
+
+## Current Conversation
+```
+{conversation}
+```
+
+
+## Retrieved Facts
+```
+{facts_section}
+```
+
+
+## Retrieved Messages
+```
+{messages_section}
+```
+
+
+## Instructions
+Generate a response (1-5 paragraphs, max 1000 words) that provides historical context for the current conversation. \
+Provide as much relevant information as possible while being concise and natural. \
+Focus ONLY on the last (most recent) message in the conversation.
+
+**Inclusion Criteria:**
+- Information directly related to topics, people, or events in the current conversation
+- Info that provide essential background
+- Messages with unique insights not covered by facts
+
+**Exclusion Criteria:**
+- Off-topic or tangentially related information
+- Ambiguous details
+- Redundant information already clear from the conversation
+
+**Conflict Resolution:**
+- Prioritize facts over messages unless messages provide unique context
+- Favor more recent information when sources conflict
+- Prefer information that aligns with the current conversation
+
+**Output Requirements:**
+- Use neutral, professional tone
+- Note uncertainties if information is incomplete
+- Return empty response if no relevant context exists
+- Avoid jargon unless used in the conversation
+- Focus on: people mentioned, related past events, and clarifying context
+
+Provide only the response without preamble or meta-commentary. \
+Remember to focus ONLY on the last (most recent) message in the conversation!
 """
 
     return prompt

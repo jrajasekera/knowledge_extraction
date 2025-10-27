@@ -11,7 +11,8 @@ def test_format_message_for_embedding_text_strips_markdown_and_mentions():
         guild_name="Playground",
         mentions=[{"id": "123", "name": "Bob"}],
     )
-    assert "Alice" in text
+    assert "Alice" not in text
+    assert text.startswith("Hello")
     assert "@Bob" in text
     assert "docs" in text
     assert "**" not in text

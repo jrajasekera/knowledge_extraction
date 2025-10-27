@@ -76,9 +76,11 @@ def format_message_for_embedding_text(
     channel_id: str | None = None,
 ) -> str:
     """Normalize a Discord message into a compact embedding-friendly string.
-    
-    Note: channel_name, channel_id, channel_topic, and guild_name are accepted 
-    but excluded from the embedding text. Only author, content, and mentions are included.
+
+    Channel metadata is accepted for future use but currently excluded from the
+    embedding text so that only the message body (plus mention summaries) is
+    encoded. The author name is deliberately omitted to keep embeddings focused
+    on content rather than speaker identity.
     """
 
     if not content:
@@ -90,8 +92,7 @@ def format_message_for_embedding_text(
     if not text:
         return ""
 
-    speaker = author_name or "Unknown author"
-    parts = [f"{speaker} said: {text}"]
+    parts = [text]
 
     mention_names = _unique_mention_names(mentions)
     if mention_names:

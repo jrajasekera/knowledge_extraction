@@ -29,7 +29,7 @@ def _row(timestamp: str = "2024-01-01T00:00:00Z") -> dict:
     node = {
         "message_id": "123",
         "content": "Original **content**",
-        "clean_content": "Alice said: Original content",
+        "clean_content": "Original content",
         "author_id": "42",
         "author_name": "Alice",
         "channel_id": "chan-1",

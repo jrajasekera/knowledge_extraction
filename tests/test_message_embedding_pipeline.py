@@ -50,5 +50,6 @@ def test_generate_message_embeddings_serializes_payloads():
     assert row["mentions"] == ["55"]
     attachments = json.loads(row["attachments"])
     assert attachments[0]["file_name"] == "doc.pdf"
-    assert row["clean_content"].startswith("Alice")
+    assert row["clean_content"].startswith("Hello")
+    assert "Alice" not in row["clean_content"]
     assert row["embedding"] == [0.5, 0.4]
