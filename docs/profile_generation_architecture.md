@@ -1,5 +1,3 @@
-Great context! This makes the profile generation much more concrete. Let me break down how to build effective profile summaries for your chatbot.
-
 ## Profile Generation Architecture
 
 ### **Stage 1: Fact Aggregation & Enrichment**
