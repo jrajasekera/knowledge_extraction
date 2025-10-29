@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -23,7 +25,56 @@ DEFAULT_RESULTS_PER_QUERY = 50
 DEFAULT_FUSION_METHOD: Literal["rrf", "score_sum", "score_max"] = "rrf"
 DEFAULT_MULTI_QUERY_BOOST = 0.0
 RRF_K = 60
-BLACKLISTED_CONTENT = {"smh", "damn", "lol", "lmao", "wtf", "fr", "fr fr", "down", "rip", "fk", "n", "?", "🤫", "😂", "🤣", "😐", "😍", "😫", "😷"}
+BLACKLIST_ENV_VAR = "SEMANTIC_MESSAGE_BLACKLIST_PATH"
+_DEFAULT_BLACKLIST_PATH = Path(__file__).resolve().parent.parent / "assets" / "semantic_message_blacklist.json"
+
+
+def _load_blacklisted_content() -> set[str]:
+    candidates: list[Path] = []
+
+    env_path = os.getenv(BLACKLIST_ENV_VAR)
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    candidates.append(_DEFAULT_BLACKLIST_PATH)
+
+    for candidate in candidates:
+        try:
+            with candidate.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            if candidate == candidates[-1]:
+                logger.warning("Default blacklist file missing at %s", candidate)
+            else:
+                logger.warning("Blacklist override path does not exist: %s", candidate)
+            continue
+        except json.JSONDecodeError as exc:
+            logger.warning("Failed to parse blacklist JSON at %s: %s", candidate, exc)
+            continue
+        except OSError as exc:
+            logger.warning("Unable to read blacklist file at %s: %s", candidate, exc)
+            continue
+
+        if not isinstance(payload, list):
+            logger.warning("Blacklist JSON at %s must be a list, got %s", candidate, type(payload))
+            continue
+
+        normalized_entries = {
+            str(entry).strip().lower()
+            for entry in payload
+            if isinstance(entry, (str, int, float)) and str(entry).strip()
+        }
+        if not normalized_entries:
+            logger.warning("Blacklist JSON at %s contained no usable entries", candidate)
+            continue
+
+        logger.info("Loaded %d blacklist terms from %s", len(normalized_entries), candidate)
+        return normalized_entries
+
+    logger.warning("Falling back to empty blacklist; no valid blacklist source found")
+    return set()
+
+
+BLACKLISTED_CONTENT = _load_blacklisted_content()
 
 
 @dataclass
