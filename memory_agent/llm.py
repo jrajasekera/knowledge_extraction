@@ -309,30 +309,32 @@ class LLMClient:
         self,
         messages: list[MessageModel],
         *,
-        max_queries: int = 4,
+        max_queries: int = 15,
     ) -> list[str]:
         """Derive diverse search phrases for message retrieval from recent conversation."""
 
         if not self.is_available or not messages:
             return []
 
-        capped = max(1, min(max_queries, 5))
-        recent_messages = messages[-5:]
+        capped = max(1, min(max_queries, 15))
+        recent_messages = messages[-6:]
         conversation_text = "\n".join(
             f"{msg.author_name}: {msg.content}" for msg in recent_messages
         )
 
         prompt = (
             "You assist with retrieving relevant historical Discord messages via semantic search.\n"
-            "Given the recent conversation, propose several short search queries (keywords or phrases) that a vector search index can use.\n"
-            "Each query should be 1-6 words, capture a distinct angle of the request, and avoid filler like 'search for'.\n\n"
+            "Given the recent conversation, propose a wide range of search queries (keywords or phrases) that a vector index can use.\n"
+            "Focus on distinct perspectives: core topic, sub-topics, follow-up actions, stakeholders, artifacts, locations, timelines, and synonyms.\n"
+            "Produce a mix of lengths: include some concise 1-3 word keywords, some medium phrases (4-8 words), and several fuller descriptive sentences up to 20 words.\n"
+            "Avoid filler like 'search for' and keep every query grounded in the conversation context.\n\n"
             "## Recent Conversation\n"
             f"{conversation_text or 'No recent messages.'}\n\n"
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
             "}\n\n"
-            f"Include between 2 and {capped} entries whenever possible."
+            f"Include between 12 and {capped} entries whenever possible; if context is sparse, return as many high-quality queries as you can."
         )
 
         try:

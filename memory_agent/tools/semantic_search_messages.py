@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,14 +19,44 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_VECTOR_INDEX = "message_embeddings"
 MAX_EXCERPT_LENGTH = 240
+DEFAULT_RESULTS_PER_QUERY = 50
+DEFAULT_FUSION_METHOD: Literal["rrf", "score_sum", "score_max"] = "rrf"
+DEFAULT_MULTI_QUERY_BOOST = 0.0
+RRF_K = 60
+BLACKLISTED_CONTENT = {"smh", "damn", "lol", "lmao", "wtf", "fr", "fr fr", "down", "rip", "fk", "n", "?", "🤫", "😂", "🤣", "😐", "😍", "😫", "😷"}
+
+
+@dataclass
+class MessageOccurrence:
+    """Track per-message observations across multiple semantic queries."""
+
+    properties: dict[str, Any]
+    best_score: float
+    query_scores: dict[int, float] = field(default_factory=dict)
+    query_ranks: dict[int, int] = field(default_factory=dict)
+
+    def add_observation(self, query_idx: int, score: float, rank: int, properties: dict[str, Any]) -> None:
+        """Record an observation for this message from a specific query."""
+
+        existing_score = self.query_scores.get(query_idx)
+        if existing_score is None or score > existing_score:
+            self.query_scores[query_idx] = score
+        if query_idx not in self.query_ranks or rank < self.query_ranks[query_idx]:
+            self.query_ranks[query_idx] = rank
+        if score > self.best_score:
+            self.best_score = score
+            self.properties = properties
 
 
 class SemanticSearchMessagesInput(BaseModel):
     """Inputs for semantic_search_messages."""
 
-    queries: list[str] = Field(min_length=1, max_length=10)
+    queries: list[str] = Field(min_length=1, max_length=20)
     limit: int = Field(default=10, ge=1, le=50)
     similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    results_per_query: int = Field(default=DEFAULT_RESULTS_PER_QUERY, ge=1, le=100)
+    fusion_method: Literal["rrf", "score_sum", "score_max"] = Field(default=DEFAULT_FUSION_METHOD)
+    multi_query_boost: float = Field(default=DEFAULT_MULTI_QUERY_BOOST, ge=0.0, le=1.0)
     channel_ids: list[str] | None = None
     author_ids: list[str] | None = None
     guild_ids: list[str] | None = None
@@ -59,6 +90,8 @@ class SemanticSearchMessageResult(BaseModel):
     reactions: list[dict[str, Any]] = Field(default_factory=list)
     similarity_score: float
     excerpt: str | None = None
+    query_scores: dict[int, float] | None = None
+    appeared_in_query_count: int | None = None
 
 
 class SemanticSearchMessagesOutput(BaseModel):
@@ -159,11 +192,12 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         if start_dt or end_dt:
             logger.info("Time range filter: start=%s, end=%s", start_dt, end_dt)
 
-        dedup: dict[str, SemanticSearchMessageResult] = {}
+        occurrences: dict[str, MessageOccurrence] = {}
         total_raw_results = 0
         total_filtered_by_threshold = 0
         total_filtered_by_time = 0
         total_missing_node = 0
+        total_filtered_by_content = 0
         queries_processed = 0
 
         for query_idx, query in enumerate(input_data.queries, 1):
@@ -181,7 +215,7 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                     self.context,
                     self.index_name,
                     embedding,
-                    input_data.limit,
+                    input_data.results_per_query,
                     filters,
                     include_evidence=False,
                 )
@@ -197,8 +231,9 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             missing_node = 0
             added_new = 0
             updated_existing = 0
+            filtered_by_content = 0
 
-            for row in rows:
+            for rank, row in enumerate(rows, start=1):
                 node = row.get("node")
                 score = float(row.get("score", 0.0))
 
@@ -222,6 +257,17 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                 timestamp_str = properties.get("timestamp")
                 timestamp_dt = _parse_timestamp(timestamp_str)
 
+                normalized_content = (properties.get("clean_content") or properties.get("content") or "").strip().lower()
+                if normalized_content in BLACKLISTED_CONTENT:
+                    filtered_by_content += 1
+                    logger.debug(
+                        "Query %d: Skipped blacklisted content '%s' for message_id=%s",
+                        query_idx,
+                        normalized_content,
+                        properties.get("message_id"),
+                    )
+                    continue
+
                 # Apply time range filters
                 if start_dt and (timestamp_dt is None or timestamp_dt < start_dt):
                     filtered_by_time += 1
@@ -242,43 +288,49 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                     )
                     continue
 
-                result = self._build_result(properties, score)
-                key = result.message_id
-                existing = dedup.get(key)
+                key = str(properties.get("message_id"))
+                occurrence = occurrences.get(key)
 
-                if existing is None or result.similarity_score > existing.similarity_score:
-                    if existing is not None:
-                        updated_existing += 1
-                        logger.debug(
-                            "Query %d: Updated existing message with higher score %.3f (was %.3f): message_id=%s, author=%s",
-                            query_idx,
-                            score,
-                            existing.similarity_score,
-                            result.message_id,
-                            result.author_name,
-                        )
-                    else:
-                        added_new += 1
-                        logger.debug(
-                            "Query %d: Added new message: message_id=%s, author=%s, score=%.3f",
-                            query_idx,
-                            result.message_id,
-                            result.author_name,
-                            score,
-                        )
-                    dedup[key] = result
-                else:
+                if occurrence is None:
+                    occurrence = MessageOccurrence(properties=properties, best_score=score)
+                    occurrence.add_observation(query_idx, score, rank, properties)
+                    occurrences[key] = occurrence
+                    added_new += 1
                     logger.debug(
-                        "Query %d: Skipped duplicate with lower score %.3f (existing %.3f): message_id=%s",
+                        "Query %d: Added new message: message_id=%s, author=%s, score=%.3f, rank=%d",
                         query_idx,
+                        key,
+                        properties.get("author_name"),
                         score,
-                        existing.similarity_score,
-                        result.message_id,
+                        rank,
+                    )
+                else:
+                    occurrence.add_observation(query_idx, score, rank, properties)
+                    updated_existing += 1
+                    logger.debug(
+                        "Query %d: Updated existing message: message_id=%s, author=%s, score=%.3f, rank=%d",
+                        query_idx,
+                        key,
+                        properties.get("author_name"),
+                        score,
+                        rank,
                     )
 
             total_filtered_by_threshold += filtered_by_threshold
             total_filtered_by_time += filtered_by_time
             total_missing_node += missing_node
+            total_filtered_by_content += filtered_by_content
+            logger.info(
+                "Query %d summary: raw=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, filtered_content=%d, added_new=%d, updated_existing=%d",
+                query_idx,
+                len(rows),
+                filtered_by_threshold,
+                filtered_by_time,
+                missing_node,
+                filtered_by_content,
+                added_new,
+                updated_existing,
+            )
 
             logger.info(
                 "Query %d summary: raw=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, added_new=%d, updated_existing=%d",
@@ -291,19 +343,104 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                 updated_existing,
             )
 
-        logger.info("Total unique messages before limit: %d", len(dedup))
+        logger.info("Total unique messages before fusion: %d", len(occurrences))
 
-        ordered = sorted(dedup.values(), key=lambda item: item.similarity_score, reverse=True)
-        limited = ordered[: input_data.limit]
+        results_with_scores: list[SemanticSearchMessageResult] = []
+        for message_id, occurrence in occurrences.items():
+            combined_score = self._calculate_combined_score(
+                occurrence,
+                input_data.fusion_method,
+                input_data.multi_query_boost,
+            )
+            result = self._build_result(
+                occurrence.properties,
+                combined_score,
+                query_scores=dict(occurrence.query_scores),
+            )
+            results_with_scores.append(result)
+
+        messages_in_multiple_queries = sum(1 for occ in occurrences.values() if len(occ.query_scores) > 1)
+        avg_queries_per_message = (
+            sum(len(occ.query_scores) for occ in occurrences.values()) / len(occurrences)
+            if occurrences
+            else 0.0
+        )
+
+        logger.info(
+            "Message fusion summary: total_unique_messages=%d, messages_in_multiple_queries=%d, avg_queries_per_message=%.2f",
+            len(occurrences),
+            messages_in_multiple_queries,
+            avg_queries_per_message,
+        )
+
+        def _sort_key(result: SemanticSearchMessageResult) -> tuple[float, float, str]:
+            timestamp_dt = _parse_timestamp(result.timestamp)
+            timestamp_value = timestamp_dt.timestamp() if timestamp_dt else float("-inf")
+            return (result.similarity_score, timestamp_value, result.message_id)
+
+        ordered = sorted(results_with_scores, key=_sort_key, reverse=True)
+
+        limited: list[SemanticSearchMessageResult] = []
+        seen_dedupe_keys: set[tuple[str, str]] = set()
+        duplicates_filtered = 0
+
+        for result in ordered:
+            if self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True):
+                if len(limited) >= input_data.limit:
+                    break
+            else:
+                duplicates_filtered += 1
+
+        if len(limited) < input_data.limit:
+            logger.debug(
+                "Not enough unique messages to satisfy limit; attempting fallback with remaining candidates",
+            )
+            for result in ordered:
+                if result in limited:
+                    continue
+                if self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True):
+                    if len(limited) >= input_data.limit:
+                        break
+
+        duplicates_reintroduced = 0
+        if len(limited) < input_data.limit:
+            logger.debug(
+                "Still short after unique fallback; allowing duplicates to fill remaining slots",
+            )
+            for result in ordered:
+                if result in limited:
+                    continue
+                if self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=False):
+                    duplicates_reintroduced += 1
+                if len(limited) >= input_data.limit:
+                    break
+
+        logger.info(
+            "Deduplicated messages by author/content: filtered_duplicates=%d, reintroduced_duplicates=%d, final_results=%d",
+            duplicates_filtered,
+            duplicates_reintroduced,
+            len(limited),
+        )
+
+        for result in limited[:5]:
+            occurrence = occurrences[result.message_id]
+            logger.debug(
+                "Top result after fusion: message_id=%s, combined_score=%.3f, appeared_in=%d, query_scores=%s",
+                result.message_id,
+                result.similarity_score,
+                len(occurrence.query_scores),
+                occurrence.query_scores,
+            )
 
         logger.info(
             "semantic_search_messages completed: queries=%d, queries_processed=%d, total_raw_results=%d, "
-            "total_filtered_threshold=%d, total_filtered_time=%d, total_missing_node=%d, unique_messages=%d, final_results=%d",
+            "total_filtered_threshold=%d, total_filtered_time=%d, total_filtered_content=%d, total_missing_node=%d, unique_messages=%d, final_results=%d",
             len(input_data.queries),
             queries_processed,
             total_raw_results,
             total_filtered_by_threshold,
             total_filtered_by_time,
+            total_filtered_by_content,
             total_missing_node,
             len(ordered),
             len(limited),
@@ -319,7 +456,32 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    def _build_result(self, properties: dict[str, Any], score: float) -> SemanticSearchMessageResult:
+    @staticmethod
+    def _calculate_combined_score(occurrence: MessageOccurrence, fusion_method: str, multi_query_boost: float) -> float:
+        if not occurrence.query_scores:
+            return occurrence.best_score
+
+        if fusion_method == "rrf":
+            return sum(1.0 / (RRF_K + rank) for rank in occurrence.query_ranks.values())
+
+        if fusion_method == "score_sum":
+            return sum(occurrence.query_scores.values())
+
+        if fusion_method == "score_max":
+            max_score = max(occurrence.query_scores.values())
+            query_count = len(occurrence.query_scores)
+            return max_score * (1.0 + multi_query_boost * (query_count - 1))
+
+        msg = f"Unsupported fusion method: {fusion_method}"
+        raise ToolError(msg)
+
+    def _build_result(
+        self,
+        properties: dict[str, Any],
+        score: float,
+        *,
+        query_scores: dict[int, float] | None = None,
+    ) -> SemanticSearchMessageResult:
         attachments = _load_json_list(properties.get("attachments"))
         reactions = _load_json_list(properties.get("reactions"))
         mentions = [str(value) for value in properties.get("mentions", []) if value is not None]
@@ -328,6 +490,7 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         content = properties.get("content") or ""
         excerpt = _safe_excerpt(clean_content or content)
         permalink = _build_permalink(properties.get("guild_id"), properties.get("channel_id"), properties.get("message_id"))
+        appeared_in_query_count = len(query_scores) if query_scores else None
         return SemanticSearchMessageResult(
             message_id=str(properties.get("message_id")),
             content=content,
@@ -352,7 +515,33 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             reactions=reactions,
             similarity_score=score,
             excerpt=excerpt,
+            query_scores=query_scores,
+            appeared_in_query_count=appeared_in_query_count,
         )
+
+    @staticmethod
+    def _dedupe_key(result: SemanticSearchMessageResult) -> tuple[str, str] | None:
+        author = (result.author_name or "").strip().lower()
+        content = (result.clean_content or result.content or "").strip().lower()
+        if not author and not content:
+            return None
+        return (author, content)
+
+    def _try_append_result(
+        self,
+        result: SemanticSearchMessageResult,
+        bucket: list[SemanticSearchMessageResult],
+        seen_dedupe_keys: set[tuple[str, str]],
+        *,
+        enforce_unique: bool,
+    ) -> bool:
+        dedupe_key = self._dedupe_key(result)
+        if enforce_unique and dedupe_key and dedupe_key in seen_dedupe_keys:
+            return False
+        if dedupe_key:
+            seen_dedupe_keys.add(dedupe_key)
+        bucket.append(result)
+        return True
 
 
 __all__ = [

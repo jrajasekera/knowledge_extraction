@@ -461,7 +461,7 @@ def create_memory_agent_graph(
 
                 if llm and conversation:
                     try:
-                        queries = await llm.extract_message_search_queries(conversation, max_queries=4)
+                        queries = await llm.extract_message_search_queries(conversation, max_queries=15)
                         if queries:
                             logger.info("LLM produced %d message search queries", len(queries))
                     except Exception as exc:  # noqa: BLE001
