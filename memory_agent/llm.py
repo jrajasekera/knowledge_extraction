@@ -55,10 +55,10 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "example": "Use when asked 'Who is into climate change research?'",
     },
     "semantic_search_facts": {
-        "description": "Perform semantic search using multiple keywords or key phrases to find relevant facts across all types.",
-        "use_when": "The goal requires broad discovery across fact types, or when you need to search for concepts using multiple related terms.",
-        "inputs": "queries (required, list of 1-5 keywords/phrases), limit (optional, will be auto-adjusted for quality filtering), similarity_threshold (optional)",
-        "example": "Use when asked 'Who has startup experience?' - extract keywords like ['startup', 'founder', 'entrepreneur', 'early-stage company'] and search with all of them to maximize recall.",
+        "description": "Perform semantic search using multiple diverse queries (12-15) to find relevant facts across all types. Uses Reciprocal Rank Fusion (RRF) to intelligently combine results.",
+        "use_when": "The goal requires broad discovery across fact types, or when searching for concepts using varied keywords and phrases. RRF will boost facts that appear in multiple query results.",
+        "inputs": "queries (required, list of 12-20 diverse keywords/phrases of varying lengths)",
+        "example": "Use when asked 'Who has startup experience?' - generate diverse queries: ['startup', 'founder', 'entrepreneur', 'early-stage company', 'venture-backed startup experience', 'building companies from scratch', 'startup leadership roles', 'validating scalable business models', 'minimal viable product (MVP) development', 'strategies for sustainable growth and customer acquisition']. Include concise keywords, medium phrases, and fuller descriptive sentences. Try not to search names more than once.",
     },
 }
 
@@ -343,6 +343,67 @@ class LLMClient:
             parsed = json.loads(response_clean)
         except Exception:  # noqa: BLE001
             logger.warning("LLM message query extraction failed", exc_info=True)
+            return []
+
+        candidates = parsed.get("queries") if isinstance(parsed, dict) else None
+        if not isinstance(candidates, list):
+            return []
+
+        cleaned: list[str] = []
+        for raw in candidates:
+            if not isinstance(raw, str):
+                continue
+            text = raw.strip()
+            if not text:
+                continue
+            if text.lower().startswith("query:"):
+                text = text.split(":", 1)[1].strip()
+            if text and text not in cleaned:
+                cleaned.append(text[:120])
+            if len(cleaned) >= capped:
+                break
+
+        return cleaned
+
+    async def extract_fact_search_queries(
+        self,
+        messages: list[MessageModel],
+        *,
+        max_queries: int = 15,
+    ) -> list[str]:
+        """Derive diverse search queries for fact retrieval from recent conversation."""
+
+        if not self.is_available or not messages:
+            return []
+
+        capped = max(1, min(max_queries, 20))
+        recent_messages = messages[-6:]
+        conversation_text = "\n".join(
+            f"{msg.author_name}: {msg.content}" for msg in recent_messages
+        )
+
+        prompt = (
+            "You assist with retrieving relevant facts about people via semantic search.\n"
+            "Given the recent conversation, propose a wide range of search queries (keywords or phrases) to find relevant facts.\n"
+            "Facts include: employment, skills, education, relationships, interests, preferences, locations, and experiences.\n"
+            "Focus on distinct perspectives: direct keywords, synonyms, related concepts, job titles, organizations, technologies, topics, and descriptive phrases.\n"
+            "Produce a mix of lengths: include some concise 1-3 word keywords, some medium phrases (4-8 words), and several fuller descriptive sentences up to 20 words.\n"
+            "Avoid filler like 'search for' and keep every query grounded in the conversation context.\n\n"
+            "## Recent Conversation\n"
+            f"{conversation_text or 'No recent messages.'}\n\n"
+            "Return JSON only in this format:\n"
+            "{\n"
+            '  "queries": ["keyword or phrase", "..."]\n'
+            "}\n\n"
+            f"Include between 12 and {capped} entries whenever possible; if context is sparse, return as many high-quality queries as you can."
+        )
+
+        try:
+            response = await asyncio.to_thread(self._llama_predict, prompt)
+            response_clean = self._normalize_json_response(response)
+            parsed = json.loads(response_clean)
+        except Exception:  # noqa: BLE001
+            logger.warning("LLM fact query extraction failed", exc_info=True)
             return []
 
         candidates = parsed.get("queries") if isinstance(parsed, dict) else None
@@ -720,12 +781,17 @@ class LLMClient:
 
         if "semantic_search_facts" in available_tools:
             # Use goal text as a single query in fallback mode
+            # Note: This fallback is only used when LLM planning fails entirely
+            # Normal operation will use extract_fact_search_queries for diverse queries
             queries = [goal_text] if goal_text else [conversation_text]
             # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
             retrieval_limit = min(state.get("max_facts", 10) * 3, 50)
             return {
                 "tool_name": "semantic_search_facts",
-                "parameters": {"queries": queries, "limit": retrieval_limit},
+                "parameters": {
+                    "queries": queries,
+                    "limit": retrieval_limit,
+                },
                 "reasoning": "Fallback heuristic defaulted to semantic search.",
                 "confidence": "low",
                 "should_stop": False,

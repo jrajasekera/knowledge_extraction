@@ -305,10 +305,28 @@ def create_memory_agent_graph(
                         except Exception as exc:  # noqa: BLE001
                             logger.info("Tool parameter refinement failed: %s", exc)
 
-                    # Ensure semantic_search_facts uses max_facts limit
+                    # Ensure semantic_search_facts uses max_facts limit and extract diverse queries
                     if tool_name == "semantic_search_facts" and isinstance(parameters, dict):
                         if "limit" not in parameters:
                             parameters["limit"] = state.get("max_facts", config.max_facts)
+
+                        # Extract diverse fact search queries using LLM
+                        conversation = state.get("conversation", [])
+                        if llm and conversation:
+                            try:
+                                extracted_queries = await llm.extract_fact_search_queries(conversation, max_queries=15)
+                                if extracted_queries:
+                                    parameters["queries"] = extracted_queries
+                                    logger.info("LLM produced %d fact search queries", len(extracted_queries))
+                            except Exception as exc:  # noqa: BLE001
+                                logger.info("Fact query extraction failed: %s", exc)
+
+                        # Fallback if no queries were extracted or LLM unavailable
+                        if "queries" not in parameters or not parameters.get("queries"):
+                            goal_text = state.get("current_goal") or ""
+                            if goal_text:
+                                parameters["queries"] = [goal_text]
+                                logger.info("Falling back to goal text for fact search")
 
                     candidate = {"name": tool_name, "input": parameters}
                     reasoning_msg = (
