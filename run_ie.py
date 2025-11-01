@@ -38,6 +38,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear any saved IE progress before starting a new run.",
     )
+    parser.add_argument(
+        "--reset-cache",
+        action="store_true",
+        help="Clear cached IE window state before running.",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run IE even if windows were previously processed and cached.",
+    )
     return parser.parse_args()
 
 
@@ -61,14 +71,15 @@ def main() -> None:
         api_key=args.api_key,
     )
 
-    if args.reset_progress:
-        reset_ie_progress(args.sqlite)
+    if args.reset_progress or args.reset_cache:
+        reset_ie_progress(args.sqlite, clear_cache=args.reset_cache)
 
     stats = run_ie_job(
         args.sqlite,
         config=config,
         client_config=llama_config,
         resume=args.resume,
+        use_cache=not args.force,
     )
 
     summary = stats.as_dict()
@@ -78,7 +89,8 @@ def main() -> None:
         chunk_text = f" chunk_target={target}"
     print(
         f"[IE] Summary: run_id={summary['run_id']} processed={summary['processed_windows']}"
-        f" skipped={summary['skipped_windows']} total_processed={summary['total_processed']}"
+        f" skipped={summary['skipped_windows']} cached={summary.get('cached_windows', 0)}"
+        f" total_processed={summary['total_processed']}"
         f"/{summary['total_windows']} completed={summary['completed']}{chunk_text}"
     )
 

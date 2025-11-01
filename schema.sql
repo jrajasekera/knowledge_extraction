@@ -263,6 +263,20 @@ CREATE TABLE IF NOT EXISTS ie_window_progress (
 CREATE INDEX IF NOT EXISTS idx_ie_window_progress_run_id
   ON ie_window_progress(run_id);
 
+CREATE TABLE IF NOT EXISTS ie_window_state (
+  focus_message_id TEXT NOT NULL REFERENCES message(id) ON DELETE CASCADE,
+  config_hash      TEXT NOT NULL,
+  last_run_id      INTEGER NOT NULL REFERENCES ie_run(id) ON DELETE CASCADE,
+  processed_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (focus_message_id, config_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ie_window_state_run_id
+  ON ie_window_state(last_run_id);
+
+CREATE INDEX IF NOT EXISTS idx_ie_window_state_config
+  ON ie_window_state(config_hash);
+
 -- 5) Derived view
 CREATE VIEW IF NOT EXISTS message_interactions AS
 SELECT

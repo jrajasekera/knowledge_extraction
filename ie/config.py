@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Literal, Mapping, Sequence
 
 from .types import FactAttribute, FactDefinition, FactType, build_fact_definition_index
 
+
+IE_CACHE_VERSION = "v1"
 
 FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
     FactDefinition(
@@ -319,3 +323,18 @@ class IEConfig:
         if self.prompt_version not in {"legacy", "enhanced"}:
             raise ValueError("prompt_version must be 'legacy' or 'enhanced'")
         return self
+
+
+def compute_config_hash(config: IEConfig) -> str:
+    """Generate a stable fingerprint for cacheable IE runs."""
+    fact_type_values = sorted({fact_type.value for fact_type in config.fact_types})
+    payload = {
+        "version": IE_CACHE_VERSION,
+        "window_size": config.window_size,
+        "prompt_version": config.prompt_version,
+        "confidence_threshold": round(config.confidence_threshold, 4),
+        "fact_types": fact_type_values,
+    }
+    serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return digest[:16]

@@ -14,7 +14,7 @@ from data_structures.ingestion import normalize_iso_timestamp
 
 from .advanced_prompts import build_enhanced_prompt
 from .client import LlamaServerClient, LlamaServerConfig
-from .config import FACT_DEFINITION_INDEX, IEConfig
+from .config import FACT_DEFINITION_INDEX, IEConfig, compute_config_hash
 from .models import ExtractionResult
 from .prompts import build_messages, window_hint
 from .types import FactDefinition, FactType
@@ -28,6 +28,7 @@ class IERunStats:
     run_id: int
     processed_windows: int
     skipped_windows: int
+    cached_windows: int
     returned_facts: int
     stored_facts: int
     total_windows: int
@@ -41,6 +42,7 @@ class IERunStats:
             "run_id": self.run_id,
             "processed_windows": self.processed_windows,
             "skipped_windows": self.skipped_windows,
+             "cached_windows": self.cached_windows,
             "returned_facts": self.returned_facts,
             "stored_facts": self.stored_facts,
             "total_windows": self.total_windows,
@@ -93,6 +95,47 @@ def _clear_ie_progress(conn: sqlite3.Connection, run_id: int | None = None) -> N
         conn.execute("DELETE FROM ie_progress WHERE run_id = ?", (run_id,))
 
 
+def _load_cached_window_ids(conn: sqlite3.Connection, *, config_hash: str) -> set[str]:
+    cursor = conn.execute(
+        "SELECT focus_message_id FROM ie_window_state WHERE config_hash = ?",
+        (config_hash,),
+    )
+    return {row[0] for row in cursor}
+
+
+def _record_cached_window(
+    conn: sqlite3.Connection,
+    *,
+    run_id: int,
+    focus_message_id: str,
+    config_hash: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO ie_window_state (focus_message_id, config_hash, last_run_id, processed_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(focus_message_id, config_hash)
+        DO UPDATE SET last_run_id = excluded.last_run_id,
+                      processed_at = CURRENT_TIMESTAMP
+        """,
+        (focus_message_id, config_hash, run_id),
+    )
+
+
+def _clear_cached_window_state(
+    conn: sqlite3.Connection,
+    *,
+    config_hash: str | None = None,
+) -> None:
+    if config_hash is None:
+        conn.execute("DELETE FROM ie_window_state")
+    else:
+        conn.execute(
+            "DELETE FROM ie_window_state WHERE config_hash = ?",
+            (config_hash,),
+        )
+
+
 def _load_processed_window_ids(conn: sqlite3.Connection, run_id: int) -> set[str]:
     cursor = conn.execute(
         "SELECT focus_message_id FROM ie_window_progress WHERE run_id = ?",
@@ -113,7 +156,7 @@ def _record_window_processed(
     )
 
 
-def reset_ie_progress(sqlite_path: str | sqlite3.Connection) -> None:
+def reset_ie_progress(sqlite_path: str | sqlite3.Connection, *, clear_cache: bool = False) -> None:
     if isinstance(sqlite_path, sqlite3.Connection):
         conn = sqlite_path
         external = True
@@ -124,6 +167,8 @@ def reset_ie_progress(sqlite_path: str | sqlite3.Connection) -> None:
     try:
         with conn:
             _clear_ie_progress(conn)
+            if clear_cache:
+                _clear_cached_window_state(conn)
     finally:
         if not external:
             conn.close()
@@ -265,6 +310,7 @@ def run_ie_job(
     config: IEConfig | None = None,
     client_config: LlamaServerConfig | None = None,
     resume: bool = False,
+    use_cache: bool = True,
 ) -> IERunStats:
     config = (config or IEConfig()).validate()
     client_config = client_config or LlamaServerConfig()
@@ -276,6 +322,12 @@ def run_ie_job(
 
     conn = external_conn or sqlite3.connect(str(sqlite_path))
     conn.execute("PRAGMA foreign_keys = ON;")
+
+    config_hash = compute_config_hash(config)
+    cached_focus_ids: set[str] = set()
+    if use_cache:
+        cached_focus_ids = _load_cached_window_ids(conn, config_hash=config_hash)
+    baseline_cached_windows = len(cached_focus_ids)
 
     builder = WindowBuilder(
         conn,
@@ -295,19 +347,22 @@ def run_ie_job(
     if progress is None:
         run_id = 0
         total_windows = 0
-        total_processed = 0
+        total_processed = baseline_cached_windows
         processed_ids = set()
     else:
         run_id = int(progress["run_id"])
         total_windows = int(progress["total_windows"])
-        total_processed = int(progress["processed_windows"])
+        total_processed = max(int(progress["processed_windows"]), baseline_cached_windows)
         processed_ids = _load_processed_window_ids(conn, run_id)
         # make sure counters stay in sync
-        if len(processed_ids) > total_processed:
-            total_processed = len(processed_ids)
+        synced_processed = len(processed_ids) + baseline_cached_windows
+        if synced_processed > total_processed:
+            total_processed = synced_processed
 
     if total_windows == 0:
         total_windows = total_windows_available
+    if total_processed > total_windows:
+        total_processed = total_windows
 
     if total_windows == 0:
         print("[IE] No messages found for extraction.")
@@ -320,6 +375,7 @@ def run_ie_job(
             run_id=run_id,
             processed_windows=0,
             skipped_windows=0,
+            cached_windows=baseline_cached_windows,
             returned_facts=0,
             stored_facts=0,
             total_windows=0,
@@ -338,7 +394,9 @@ def run_ie_job(
         _initialize_ie_progress(conn, run_id, total_windows)
         conn.commit()
         processed_ids = set()
-        total_processed = 0
+        total_processed = baseline_cached_windows
+        if baseline_cached_windows:
+            _update_ie_progress(conn, run_id, total_processed)
 
     remaining_windows = max(total_windows - total_processed, 0)
     if remaining_windows == 0:
@@ -351,6 +409,7 @@ def run_ie_job(
             run_id=run_id,
             processed_windows=0,
             skipped_windows=0,
+            cached_windows=baseline_cached_windows,
             returned_facts=0,
             stored_facts=0,
             total_windows=total_windows,
@@ -487,6 +546,14 @@ def run_ie_job(
             processed_this_run += 1
             total_processed += 1
 
+            _record_cached_window(
+                conn,
+                run_id=run_id,
+                focus_message_id=window.focus.id,
+                config_hash=config_hash,
+            )
+            cached_focus_ids.add(window.focus.id)
+
             _record_window_processed(
                 conn,
                 run_id=run_id,
@@ -516,7 +583,7 @@ def run_ie_job(
                 if total_processed >= total_windows or processed_this_run >= session_target:
                     break
 
-                if window.focus.id in processed_ids:
+                if window.focus.id in processed_ids or window.focus.id in cached_focus_ids:
                     skipped_windows += 1
                     continue
 
@@ -555,6 +622,7 @@ def run_ie_job(
             run_id=run_id,
             processed_windows=processed_this_run,
             skipped_windows=skipped_windows,
+            cached_windows=baseline_cached_windows,
             returned_facts=total_facts_returned,
             stored_facts=stored_facts,
             total_windows=total_windows,
@@ -571,6 +639,7 @@ def run_ie_job(
         run_id=run_id,
         processed_windows=0,
         skipped_windows=0,
+        cached_windows=baseline_cached_windows,
         returned_facts=0,
         stored_facts=0,
         total_windows=total_windows,

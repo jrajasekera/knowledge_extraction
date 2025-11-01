@@ -299,7 +299,14 @@ def _run_pipeline(
 
             def run_ie() -> Dict[str, Any]:
                 resume_ie = _has_ie_progress(sqlite_path)
-                if resume_ie and not args.resume:
+                if args.reset_ie_cache:
+                    if resume_ie:
+                        print("[IE] Clearing saved IE progress and cached window state (--reset-ie-cache).")
+                    else:
+                        print("[IE] Clearing cached IE window state (--reset-ie-cache).")
+                    reset_ie_progress(sqlite_path, clear_cache=True)
+                    resume_ie = False
+                elif resume_ie and not args.resume:
                     print("[IE] Clearing residual progress for fresh run.")
                     reset_ie_progress(sqlite_path)
                     resume_ie = False
@@ -324,6 +331,7 @@ def _run_pipeline(
                     config=ie_config,
                     client_config=llama_config,
                     resume=resume_ie,
+                    use_cache=not args.force_ie,
                 )
                 return stats.as_dict()
 
@@ -375,6 +383,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Maximum number of simultaneous IE LLM requests to issue.",
+    )
+    parser.add_argument(
+        "--force-ie",
+        action="store_true",
+        help="Re-run the IE stage even if cached windows were previously processed.",
+    )
+    parser.add_argument(
+        "--reset-ie-cache",
+        action="store_true",
+        help="Clear cached IE window state before running the IE stage.",
     )
     parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
     parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
