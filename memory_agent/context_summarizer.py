@@ -81,9 +81,9 @@ Produce **1–5 paragraphs (≤1000 words)** that add **concise, relevant histor
    - directly relate to the current topic/people/events,
    - fill essential background gaps,
    - or add unique insights not already obvious in the conversation.
-3. **Resolve conflicts:**  
-   - Prefer **Facts** over **Messages**, unless a message adds unique, situational nuance.  
-   - When sources conflict, favor **more recent** items.  
+3. **Resolve conflicts:**
+   - Prefer **Facts** over **Messages**, unless a message adds unique, situational nuance.
+   - When sources conflict, favor **more recent** items.
    - Prefer items that align with the current conversation’s focus.
 4. **De-duplicate & compress:** Merge overlapping items. Remove redundant or already-obvious details.
 5. **Quote sparingly & precisely:** Use **short quotes (≤30 words)** or specific references. When an ID/index is available, attribute like **(Fact #3)** or **(Msg #12)** using the identifiers present in the inputs.
@@ -91,19 +91,19 @@ Produce **1–5 paragraphs (≤1000 words)** that add **concise, relevant histor
 7. **No invention:** Do **not** introduce external facts unless absolutely necessary to clarify a term; if you must, mark it as general knowledge and keep it minimal.
 
 ### Inclusion Criteria
-- Items directly tied to the conversation’s topics, people, or events  
-- Background essential to understand the current exchange  
+- Items directly tied to the conversation’s topics, people, or events
+- Background essential to understand the current exchange
 - Messages that add unique insights not covered by Facts
 
 ### Exclusion Criteria
-- Off-topic or tangential info  
-- Ambiguous details you cannot ground in the inputs  
+- Off-topic or tangential info
+- Ambiguous details you cannot ground in the inputs
 - Repetition of what is already clear from the conversation
 
 ### Output Requirements
-- **Tone:** neutral, professional; avoid jargon unless the conversation used it  
-- **Focus:** people mentioned, related past events, clarifying context—**especially for the last message**  
-- **Attribution:** inline references like (Fact #x)/(Msg #y) when IDs exist; otherwise name/date if available  
+- **Tone:** neutral, professional; avoid jargon unless the conversation used it
+- **Focus:** people mentioned, related past events, clarifying context—**especially for the last message**
+- **Attribution:** inline references like (Fact: <fact content>)/(Msg: <message content>) when IDs exist; otherwise name/date if available
 - **If nothing relevant exists:** return an **empty string** (no explanation)
 """
 
