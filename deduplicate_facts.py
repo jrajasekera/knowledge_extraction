@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Run without persisting changes or updating Neo4j.")
     parser.add_argument("--graph-delete-batch-size", type=int, default=100, help="Batch size when deleting old Neo4j relationships.")
     parser.add_argument("--max-group-size", type=int, default=10, help="Maximum fact count sent to the LLM per candidate group.")
+    parser.add_argument("--no-progress-bar", action="store_true", help="Disable the interactive progress display.")
     parser.add_argument("--llm-base-url", default=default_llm.base_url, help="LLM endpoint base URL.")
     parser.add_argument("--llm-model", default=default_llm.model, help="LLM model name.")
     parser.add_argument("--llm-timeout", type=float, default=default_llm.timeout, help="LLM request timeout in seconds.")
@@ -82,6 +83,7 @@ def main() -> None:
         max_partitions=args.max_partitions,
         graph_delete_batch_size=args.graph_delete_batch_size,
         max_group_size=args.max_group_size,
+        show_progress=not args.no_progress_bar,
     )
 
     orchestrator = DeduplicationOrchestrator(config)

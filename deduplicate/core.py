@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
 from collections import defaultdict
+from contextlib import nullcontext
 from typing import Iterable, Mapping, Sequence
 
 from neo4j import GraphDatabase
@@ -16,6 +17,8 @@ from ie.client import LlamaServerConfig
 from ie.config import FACT_DEFINITION_INDEX
 from ie.types import FactType
 
+from .display import ProgressDisplay
+from .logging_support import ProgressLoggingManager
 from .llm.client import DeduplicationLLMClient
 from .llm.parser import CanonicalFactsParser
 from .models import CanonicalFact, CandidateGroup, DeduplicationStats, FactRecord, Partition
@@ -51,6 +54,7 @@ class DeduplicationConfig:
     max_partitions: int | None = None
     graph_delete_batch_size: int = 100
     max_group_size: int = 25
+    show_progress: bool = True
 
     def validate(self) -> "DeduplicationConfig":
         if self.minhash_threshold <= 0.0 or self.minhash_threshold > 1.0:
@@ -111,163 +115,192 @@ class DeduplicationOrchestrator:
         group_size_sum = 0
         failure_detected = False
 
+        run_snapshot = progress.get_run_snapshot(run_id)
+        progress_display = ProgressDisplay(
+            enabled=self.config.show_progress,
+            total_partitions=run_snapshot.total_partitions or total_partitions,
+            base_processed=run_snapshot.processed_partitions,
+            base_facts=run_snapshot.facts_processed,
+            base_groups=run_snapshot.candidate_groups_processed,
+            base_merged=run_snapshot.facts_merged,
+            started_at=run_snapshot.started_at,
+        )
+        progress_display.update(stats, force=True)
+
         partition_iterator = partitioner.iter_partitions(limit=self.config.max_partitions)
 
-        with DeduplicationLLMClient(
-            self.config.llm_config,
-            parser=llm_parser,
-            max_retries=self.config.llm_max_retries,
-        ) as llm_client:
-            for selection in partition_iterator:
-                partition = selection.partition
-                key = (partition.fact_type, partition.subject_id)
-                if key in completed_keys:
+        logging_context = (
+            ProgressLoggingManager(progress_display)
+            if progress_display.requires_log_cooperation
+            else nullcontext()
+        )
+
+        with logging_context:
+            with DeduplicationLLMClient(
+                self.config.llm_config,
+                parser=llm_parser,
+                max_retries=self.config.llm_max_retries,
+            ) as llm_client:
+                for selection in partition_iterator:
+                    partition = selection.partition
+                    key = (partition.fact_type, partition.subject_id)
+                    if key in completed_keys:
+                        logger.info(
+                            "Skipping partition %s/%s (already completed)",
+                            partition.fact_type.value,
+                            partition.subject_id,
+                        )
+                        continue
+
                     logger.info(
-                        "Skipping partition %s/%s (already completed)",
+                        "Processing partition %s/%s (%d facts)",
+                        partition.fact_type.value,
+                        partition.subject_id,
+                        len(selection.facts),
+                    )
+
+                    progress_display.set_active_partition(partition, len(selection.facts))
+                    progress_display.update(stats, force=True)
+
+                    progress.ensure_partition_entry(run_id, partition)
+                    progress.mark_partition_status(run_id, partition, "in_progress")
+
+                    stats.facts_processed += len(selection.facts)
+
+                    facts_lookup = {fact.id: fact for fact in selection.facts}
+                    minhash_pairs = minhash_detector.find_candidate_pairs(selection.facts)
+                    embedding_pairs = embedding_detector.find_candidate_pairs(selection.facts)
+                    minhash_pair_set = {
+                        tuple(sorted((pair.source_id, pair.target_id))) for pair in minhash_pairs
+                    }
+                    embedding_pair_set = {
+                        tuple(sorted((pair.source_id, pair.target_id))) for pair in embedding_pairs
+                    }
+                    shared_pairs = minhash_pair_set & embedding_pair_set
+                    logger.info(
+                        "Similarity pairs summary for partition %s/%s: minhash=%d, embedding=%d, overlap=%d",
+                        partition.fact_type.value,
+                        partition.subject_id,
+                        len(minhash_pairs),
+                        len(embedding_pairs),
+                        len(shared_pairs),
+                    )
+                    candidate_groups = grouper.build_groups(
+                        partition,
+                        selection.facts,
+                        minhash_pairs=minhash_pairs,
+                        embedding_pairs=embedding_pairs,
+                    )
+                    candidate_groups = self._enforce_group_limits(
+                        candidate_groups,
+                        facts_lookup,
+                    )
+
+                    if not candidate_groups:
+                        logger.info(
+                            "No candidate groups identified for partition %s/%s; skipping LLM invocation.",
+                            partition.fact_type.value,
+                            partition.subject_id,
+                        )
+                        progress.mark_partition_status(run_id, partition, "completed")
+                        progress.update_totals(
+                            run_id,
+                            processed_partitions=1,
+                            facts_processed=len(selection.facts),
+                            facts_merged=0,
+                            candidate_groups_processed=0,
+                        )
+                        stats.processed_partitions += 1
+                        progress_display.set_active_partition(None)
+                        progress_display.update(stats)
+                        continue
+
+                    partition_group_count = len(candidate_groups)
+                    partition_group_size_sum = sum(len(group.fact_ids) for group in candidate_groups)
+
+                    logger.info(
+                        "Evaluating %d candidate groups (avg size %.1f) for partition %s/%s",
+                        partition_group_count,
+                        partition_group_size_sum / partition_group_count
+                        if partition_group_count
+                        else 0.0,
                         partition.fact_type.value,
                         partition.subject_id,
                     )
-                    continue
 
-                logger.info(
-                    "Processing partition %s/%s (%d facts)",
-                    partition.fact_type.value,
-                    partition.subject_id,
-                    len(selection.facts),
-                )
+                    partition_deleted: list[int] = []
+                    partition_canonical: list[int] = []
+                    partition_merge_delta = 0
+                    partition_failed = False
 
-                progress.ensure_partition_entry(run_id, partition)
-                progress.mark_partition_status(run_id, partition, "in_progress")
+                    for group in candidate_groups:
+                        self._log_group_preview(group, facts_lookup)
+                        try:
+                            canonical_facts = llm_client.generate_canonical_facts(group, facts_lookup)
+                        except Exception as exc:  # noqa: BLE001 - surface all issues
+                            logger.exception(
+                                "LLM processing failed for partition %s/%s: %s",
+                                partition.fact_type.value,
+                                partition.subject_id,
+                                exc,
+                            )
+                            partition_failed = True
+                            break
 
-                stats.facts_processed += len(selection.facts)
+                        source_facts = [facts_lookup[fact_id] for fact_id in group.sorted_fact_ids()]
+                        similarity_payload = {
+                            method: [pair.as_tuple() for pair in pairs]
+                            for method, pairs in group.similarity.items()
+                        }
+                        self._log_canonical_preview(partition, canonical_facts)
+                        outcome = persistence.apply_group(
+                            canonical_facts,
+                            source_facts,
+                            similarity_payload,
+                        )
+                        partition_deleted.extend(outcome.deleted_fact_ids)
+                        partition_canonical.extend(outcome.canonical_fact_ids)
+                        if outcome.deleted_fact_ids:
+                            merge_delta = max(
+                                0,
+                                len(outcome.deleted_fact_ids) - len(outcome.canonical_fact_ids),
+                            )
+                            partition_merge_delta += merge_delta
 
-                facts_lookup = {fact.id: fact for fact in selection.facts}
-                minhash_pairs = minhash_detector.find_candidate_pairs(selection.facts)
-                embedding_pairs = embedding_detector.find_candidate_pairs(selection.facts)
-                minhash_pair_set = {
-                    tuple(sorted((pair.source_id, pair.target_id))) for pair in minhash_pairs
-                }
-                embedding_pair_set = {
-                    tuple(sorted((pair.source_id, pair.target_id))) for pair in embedding_pairs
-                }
-                shared_pairs = minhash_pair_set & embedding_pair_set
-                logger.info(
-                    "Similarity pairs summary for partition %s/%s: minhash=%d, embedding=%d, overlap=%d",
-                    partition.fact_type.value,
-                    partition.subject_id,
-                    len(minhash_pairs),
-                    len(embedding_pairs),
-                    len(shared_pairs),
-                )
-                candidate_groups = grouper.build_groups(
-                    partition,
-                    selection.facts,
-                    minhash_pairs=minhash_pairs,
-                    embedding_pairs=embedding_pairs,
-                )
-                candidate_groups = self._enforce_group_limits(
-                    candidate_groups,
-                    facts_lookup,
-                )
+                    if partition_failed:
+                        failure_detected = True
+                        progress.mark_partition_status(run_id, partition, "failed")
+                        progress_display.set_active_partition(None)
+                        continue
 
-                if not candidate_groups:
-                    logger.info(
-                        "No candidate groups identified for partition %s/%s; skipping LLM invocation.",
-                        partition.fact_type.value,
-                        partition.subject_id,
-                    )
+                    if partition_deleted:
+                        deleted_fact_ids.update(partition_deleted)
+                    if partition_canonical:
+                        canonical_fact_ids.update(partition_canonical)
+
+                    stats.candidate_groups_processed += partition_group_count
+                    if partition_group_count:
+                        group_size_sum += partition_group_size_sum
+                    stats.facts_merged += partition_merge_delta
+                    stats.processed_partitions += 1
                     progress.mark_partition_status(run_id, partition, "completed")
                     progress.update_totals(
                         run_id,
                         processed_partitions=1,
                         facts_processed=len(selection.facts),
-                        facts_merged=0,
-                        candidate_groups_processed=0,
+                        facts_merged=partition_merge_delta,
+                        candidate_groups_processed=len(candidate_groups),
                     )
-                    stats.processed_partitions += 1
-                    continue
+                    progress_display.set_active_partition(None)
+                    progress_display.update(stats)
 
-                partition_group_count = len(candidate_groups)
-                partition_group_size_sum = sum(len(group.fact_ids) for group in candidate_groups)
+            conn.close()
 
-                logger.info(
-                    "Evaluating %d candidate groups (avg size %.1f) for partition %s/%s",
-                    partition_group_count,
-                    partition_group_size_sum / partition_group_count
-                    if partition_group_count
-                    else 0.0,
-                    partition.fact_type.value,
-                    partition.subject_id,
-                )
+            stats.elapsed_time = time.time() - start_time
+            if stats.candidate_groups_processed:
+                stats.average_group_size = group_size_sum / stats.candidate_groups_processed
 
-                partition_deleted: list[int] = []
-                partition_canonical: list[int] = []
-                partition_merge_delta = 0
-                partition_failed = False
-
-                for group in candidate_groups:
-                    self._log_group_preview(group, facts_lookup)
-                    try:
-                        canonical_facts = llm_client.generate_canonical_facts(group, facts_lookup)
-                    except Exception as exc:  # noqa: BLE001 - surface all issues
-                        logger.exception(
-                            "LLM processing failed for partition %s/%s: %s",
-                            partition.fact_type.value,
-                            partition.subject_id,
-                            exc,
-                        )
-                        partition_failed = True
-                        break
-
-                    source_facts = [facts_lookup[fact_id] for fact_id in group.sorted_fact_ids()]
-                    similarity_payload = {
-                        method: [pair.as_tuple() for pair in pairs]
-                        for method, pairs in group.similarity.items()
-                    }
-                    self._log_canonical_preview(partition, canonical_facts)
-                    outcome = persistence.apply_group(
-                        canonical_facts,
-                        source_facts,
-                        similarity_payload,
-                    )
-                    partition_deleted.extend(outcome.deleted_fact_ids)
-                    partition_canonical.extend(outcome.canonical_fact_ids)
-                    if outcome.deleted_fact_ids:
-                        merge_delta = max(
-                            0,
-                            len(outcome.deleted_fact_ids) - len(outcome.canonical_fact_ids),
-                        )
-                        partition_merge_delta += merge_delta
-
-                if partition_failed:
-                    failure_detected = True
-                    progress.mark_partition_status(run_id, partition, "failed")
-                    continue
-
-                if partition_deleted:
-                    deleted_fact_ids.update(partition_deleted)
-                if partition_canonical:
-                    canonical_fact_ids.update(partition_canonical)
-
-                stats.candidate_groups_processed += partition_group_count
-                if partition_group_count:
-                    group_size_sum += partition_group_size_sum
-                stats.facts_merged += partition_merge_delta
-                stats.processed_partitions += 1
-                progress.mark_partition_status(run_id, partition, "completed")
-                progress.update_totals(
-                    run_id,
-                    processed_partitions=1,
-                    facts_processed=len(selection.facts),
-                    facts_merged=partition_merge_delta,
-                    candidate_groups_processed=len(candidate_groups),
-                )
-
-        conn.close()
-
-        stats.elapsed_time = time.time() - start_time
-        if stats.candidate_groups_processed:
-            stats.average_group_size = group_size_sum / stats.candidate_groups_processed
+            progress_display.finish(stats)
 
         if not self.config.dry_run and (deleted_fact_ids or canonical_fact_ids):
             try:

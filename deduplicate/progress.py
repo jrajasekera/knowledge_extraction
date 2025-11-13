@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from ie.types import FactType
 
@@ -14,6 +15,18 @@ class RunRecord:
     status: str
     total_partitions: int
     processed_partitions: int
+
+
+@dataclass(slots=True)
+class RunSnapshot:
+    id: int
+    status: str
+    total_partitions: int
+    processed_partitions: int
+    facts_processed: int
+    facts_merged: int
+    candidate_groups_processed: int
+    started_at: datetime
 
 
 class DeduplicationProgress:
@@ -58,6 +71,34 @@ class DeduplicationProgress:
         )
         self._conn.commit()
         return int(cur.lastrowid)
+
+    def get_run_snapshot(self, run_id: int) -> RunSnapshot:
+        row = self._conn.execute(
+            """
+            SELECT id, status, total_partitions, processed_partitions,
+                   facts_processed, facts_merged, candidate_groups_processed,
+                   started_at
+            FROM deduplication_run
+            WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f"No deduplication run found for id={run_id}")
+
+        started_at_raw = row["started_at"]
+        started_at = _coerce_utc_datetime(started_at_raw)
+
+        return RunSnapshot(
+            id=int(row["id"]),
+            status=str(row["status"]),
+            total_partitions=int(row["total_partitions"] or 0),
+            processed_partitions=int(row["processed_partitions"] or 0),
+            facts_processed=int(row["facts_processed"] or 0),
+            facts_merged=int(row["facts_merged"] or 0),
+            candidate_groups_processed=int(row["candidate_groups_processed"] or 0),
+            started_at=started_at,
+        )
 
     def resume_run(self, run_id: int) -> None:
         self._conn.execute(
@@ -156,3 +197,15 @@ class DeduplicationProgress:
             (FactType(row["fact_type"]), str(row["subject_id"]))
             for row in rows
         }
+
+
+def _coerce_utc_datetime(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return datetime.now(timezone.utc)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
