@@ -12,6 +12,7 @@ from typing import Iterable, Mapping, Sequence
 
 from neo4j import GraphDatabase
 
+from db_utils import get_sqlite_connection
 from facts_to_graph import materialize_facts
 from ie.client import LlamaServerConfig
 from ie.config import FACT_DEFINITION_INDEX
@@ -80,7 +81,7 @@ class DeduplicationOrchestrator:
 
     def run(self) -> DeduplicationStats:
         start_time = time.time()
-        conn = sqlite3.connect(str(self.config.sqlite_path))
+        conn = get_sqlite_connection(self.config.sqlite_path, timeout=60.0)
         conn.row_factory = sqlite3.Row
         partitioner = FactPartitioner(conn, min_confidence=self.config.min_confidence)
         progress = DeduplicationProgress(conn)
@@ -319,7 +320,7 @@ class DeduplicationOrchestrator:
         elif self.config.dry_run:
             logger.info("Dry-run complete; skipping graph synchronization.")
 
-        conn = sqlite3.connect(str(self.config.sqlite_path))
+        conn = get_sqlite_connection(self.config.sqlite_path, timeout=60.0)
         try:
             run_progress = DeduplicationProgress(conn)
             run_progress.mark_run_completed(

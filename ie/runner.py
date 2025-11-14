@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Iterable, Sequence
 
 import httpx
 from pydantic import ValidationError
 
+# Add parent directory to path for db_utils import
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from db_utils import get_sqlite_connection
 from data_structures.ingestion import normalize_iso_timestamp
 
 from .advanced_prompts import build_enhanced_prompt
@@ -161,7 +168,7 @@ def reset_ie_progress(sqlite_path: str | sqlite3.Connection, *, clear_cache: boo
         conn = sqlite_path
         external = True
     else:
-        conn = sqlite3.connect(str(sqlite_path))
+        conn = get_sqlite_connection(sqlite_path, timeout=60.0)
         external = False
 
     try:
@@ -320,8 +327,7 @@ def run_ie_job(
     else:
         external_conn = None
 
-    conn = external_conn or sqlite3.connect(str(sqlite_path))
-    conn.execute("PRAGMA foreign_keys = ON;")
+    conn = external_conn or get_sqlite_connection(sqlite_path, timeout=60.0)
 
     config_hash = compute_config_hash(config)
     cached_focus_ids: set[str] = set()

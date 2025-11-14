@@ -23,6 +23,9 @@ uv sync
 # Initialize SQLite schema (idempotent)
 sqlite3 ./discord.db < schema.sql
 
+# Enable WAL mode for concurrent access (recommended)
+uv run python scripts/enable_wal_mode.py --db-path ./discord.db
+
 # Start Neo4j (Docker example)
 docker run -p7474:7474 -p7687:7687 -e NEO4J_AUTH=neo4j/test neo4j:5.22
 ```
@@ -121,6 +124,7 @@ uv run python scripts/graph_snapshot.py --password 'test' --sample-limit 20
 # Check SQLite data
 sqlite3 ./discord.db "SELECT count(*) FROM message;"
 sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY confidence DESC LIMIT 10;"
+sqlite3 ./discord.db "SELECT query, status_code, duration_ms FROM memory_agent_request_log ORDER BY requested_at DESC LIMIT 5;"
 
 # Neo4j Browser: http://localhost:7474
 # Example Cypher queries in README.md Query Cookbook section
@@ -134,7 +138,8 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
    - Lossless Discord data storage
    - Schema: `schema.sql` defines ~20 tables including `guild`, `channel`, `member`, `message`, `attachment`, `embed`, `reaction`
    - IE provenance: `ie_run`, `fact`, `fact_evidence` tables track extraction runs and fact sources
-   - Key indices: `idx_message_channel_ts`, `idx_message_author_ts`
+   - API audit log: `memory_agent_request_log` table tracks all memory agent API requests/responses with timing and metadata
+   - Key indices: `idx_message_channel_ts`, `idx_message_author_ts`, `idx_memory_agent_log_requested_at`
 
 2. **Neo4j (Graph Database)**
    - Core entities: `Person`, `Guild`, `Channel`, `Message`, `Role`
@@ -170,6 +175,7 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
   - `memory_agent/agent.py`: LangGraph-based agentic retrieval workflow
   - `memory_agent/tools/`: Neo4j-backed retrieval tools (person profile, timeline, semantic search, etc.)
   - `memory_agent/config.py`: Environment-based configuration
+  - `memory_agent/request_logger.py`: Database-backed API request/response audit logging
 - **`deduplicate/`**: Fact deduplication subsystem
   - `deduplicate/core.py`: Orchestration and merge logic
   - `deduplicate/similarity/`: MinHash LSH and embedding-based similarity detection
@@ -210,6 +216,7 @@ sqlite3 ./discord.db "SELECT type, subject_id, confidence FROM fact ORDER BY con
 - `MESSAGE_EMBEDDING_BATCH_SIZE`: Batch size for `scripts/embed_messages.py` (default: `128`)
 
 ### Memory Agent Service
+- `SQLITE_DB_PATH`: Path to SQLite database for request logging (default: `./discord.db`)
 - `API_HOST`: FastAPI host (default: `0.0.0.0`)
 - `API_PORT`: FastAPI port (default: `8000`)
 - `LOG_LEVEL`: Logging level (default: `INFO`)
@@ -253,6 +260,39 @@ UPDATE member SET official_name='John Smith' WHERE id='...';
 ### Fact Evidence Provenance
 Each fact in the `fact` table has corresponding `fact_evidence` entries linking back to specific `message_id`s, maintaining full traceability.
 
+### API Request Logging
+All memory agent API requests to `/api/memory/retrieve` are logged to the `memory_agent_request_log` table:
+- Each request gets a unique UUID identifier
+- Request and response payloads are stored as JSON for full reproducibility
+- Timing information (requested_at, completed_at, duration_ms) enables performance analysis
+- HTTP status codes and error details are captured for failed requests
+- Metadata includes facts_returned count, confidence level, and client IP address
+
+Query examples:
+```sql
+-- View recent requests with timing
+SELECT id, query, status_code, duration_ms, facts_returned, requested_at
+FROM memory_agent_request_log
+ORDER BY requested_at DESC
+LIMIT 10;
+
+-- Analyze error rates
+SELECT status_code, COUNT(*) as count
+FROM memory_agent_request_log
+GROUP BY status_code;
+
+-- Find slow requests (>5 seconds)
+SELECT id, query, duration_ms, facts_returned
+FROM memory_agent_request_log
+WHERE duration_ms > 5000
+ORDER BY duration_ms DESC;
+
+-- Average response time by success/failure
+SELECT status_code, AVG(duration_ms) as avg_ms, COUNT(*) as count
+FROM memory_agent_request_log
+GROUP BY status_code;
+```
+
 ### Pipeline Resumability
 `run_pipeline.py` tracks completion in `pipeline_stage` table, allowing re-runs to skip completed stages. Use `--reset-stage <stage>` to force re-execution.
 
@@ -268,20 +308,22 @@ Each fact in the `fact` table has corresponding `fact_evidence` entries linking 
 
 - Scripts use `snake_case.py` (e.g., `import_discord_json.py`)
 - Modules under `ie/` and `memory_agent/` use `snake_case.py`
+- Utility modules: `db_utils.py` (SQLite connection helpers with WAL mode support)
 - Data files: `discord.db` (SQLite), `schema.sql` (schema definition), `ingest.cql` (Neo4j setup)
 - Exports directory: `data/` or `./exports` (not committed to git)
 - Test fixtures: `tests/fixtures/`
 
 ## Common Pitfalls
 
-1. **Foreign key violations**: SQLite requires `PRAGMA foreign_keys = ON;` - the importer sets this automatically
-2. **Neo4j driver errors**: Each `session.run()` accepts only one statement; multi-statement queries must be split
-3. **Missing embeddings**: Run `scripts/embed_facts.py --cleanup` after loading facts to enable semantic search
-4. **IE confidence tuning**: Default threshold is 0.5; increase to 0.7+ for higher precision, lower to 0.3 for recall
-5. **llama-server connection**: Ensure llama-server is running at `LLAMA_BASE_URL` before running IE
-6. **GDS projection timing**: Run `ingest.cql` AFTER `loader.py` has materialized `INTERACTED_WITH` relationships
-7. **Duplicate facts**: After running IE multiple times, use `deduplicate_facts.py` to merge semantically identical facts
-8. **Transformers dependency**: The project uses a specific git revision of transformers for Embedding Gemma support (see `pyproject.toml`)
+1. **Database locked errors**: When running multiple processes (e.g., memory agent API + deduplication), enable WAL mode with `uv run python scripts/enable_wal_mode.py` to allow concurrent reads/writes. WAL mode is persistent and only needs to be enabled once per database. The codebase uses `db_utils.get_sqlite_connection()` which automatically configures appropriate timeouts and WAL mode.
+2. **Foreign key violations**: SQLite requires `PRAGMA foreign_keys = ON;` - the importer sets this automatically
+3. **Neo4j driver errors**: Each `session.run()` accepts only one statement; multi-statement queries must be split
+4. **Missing embeddings**: Run `scripts/embed_facts.py --cleanup` after loading facts to enable semantic search
+5. **IE confidence tuning**: Default threshold is 0.5; increase to 0.7+ for higher precision, lower to 0.3 for recall
+6. **llama-server connection**: Ensure llama-server is running at `LLAMA_BASE_URL` before running IE
+7. **GDS projection timing**: Run `ingest.cql` AFTER `loader.py` has materialized `INTERACTED_WITH` relationships
+8. **Duplicate facts**: After running IE multiple times, use `deduplicate_facts.py` to merge semantically identical facts
+9. **Transformers dependency**: The project uses a specific git revision of transformers for Embedding Gemma support (see `pyproject.toml`)
 
 ## Coding Style & Conventions
 

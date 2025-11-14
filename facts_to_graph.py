@@ -12,6 +12,7 @@ from typing import Any, Iterable, Sequence
 
 from neo4j import GraphDatabase
 
+from db_utils import get_sqlite_connection
 from ie.types import FactType
 from data_structures.ingestion import normalize_iso_timestamp
 
@@ -1002,8 +1003,7 @@ def materialize_facts(
 ) -> MaterializeSummary:
     selected_types = tuple(fact_types or HANDLERS.keys())
 
-    conn = sqlite3.connect(str(sqlite_path))
-    conn.execute("PRAGMA foreign_keys = ON;")
+    conn = get_sqlite_connection(sqlite_path, timeout=60.0)
 
     driver = GraphDatabase.driver(neo4j_uri, auth=(user, password))
     processed = 0

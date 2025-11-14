@@ -11,6 +11,8 @@ from typing import Any, Dict
 
 from neo4j import GraphDatabase
 
+from db_utils import get_sqlite_connection
+
 def batched(cursor: sqlite3.Cursor, fetchsize: int):
     while True:
         rows = cursor.fetchmany(fetchsize)
@@ -274,7 +276,7 @@ def load_into_neo4j(
     user: str = "neo4j",
     password: str,
 ) -> None:
-    conn = sqlite3.connect(str(sqlite_path))
+    conn = get_sqlite_connection(sqlite_path, timeout=60.0, read_only=True)
     cur = conn.cursor()
     driver = GraphDatabase.driver(neo4j_uri, auth=(user, password))
 

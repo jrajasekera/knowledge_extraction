@@ -17,6 +17,8 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 import orjson
 
+from db_utils import get_sqlite_connection
+
 def iso(dt: Optional[str]) -> Optional[str]:
     return dt if dt else None
 
@@ -237,8 +239,7 @@ def ingest_exports(
     if not paths:
         raise ValueError("No JSON exports found to ingest.")
 
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA foreign_keys = ON;")
+    conn = get_sqlite_connection(db_path, timeout=60.0)
     total = 0
     try:
         with conn:

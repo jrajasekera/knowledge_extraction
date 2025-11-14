@@ -277,7 +277,29 @@ CREATE INDEX IF NOT EXISTS idx_ie_window_state_run_id
 CREATE INDEX IF NOT EXISTS idx_ie_window_state_config
   ON ie_window_state(config_hash);
 
--- 5) Derived view
+-- 7) Memory agent API request/response audit log
+CREATE TABLE IF NOT EXISTS memory_agent_request_log (
+  id              TEXT PRIMARY KEY,
+  requested_at    TEXT NOT NULL,
+  completed_at    TEXT,
+  duration_ms     INTEGER,
+  query           TEXT NOT NULL,
+  request_payload TEXT NOT NULL,
+  status_code     INTEGER NOT NULL,
+  response_payload TEXT,
+  error_detail    TEXT,
+  facts_returned  INTEGER,
+  confidence      REAL,
+  client_ip       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_agent_log_requested_at
+  ON memory_agent_request_log(requested_at);
+
+CREATE INDEX IF NOT EXISTS idx_memory_agent_log_status
+  ON memory_agent_request_log(status_code);
+
+-- 8) Derived view
 CREATE VIEW IF NOT EXISTS message_interactions AS
 SELECT
   m1.author_id AS a,

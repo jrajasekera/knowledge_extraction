@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from db_utils import get_sqlite_connection
 from facts_to_graph import MaterializeSummary, materialize_facts
 from ie import IEConfig, LlamaServerConfig, FactType, IERunStats, reset_ie_progress, run_ie_job
 from import_discord_json import ingest_exports
@@ -37,7 +38,7 @@ def apply_schema(sqlite_path: Path, schema_path: Path) -> None:
     """Ensure the SQLite schema is applied before ingesting."""
     schema_sql = schema_path.read_text(encoding="utf-8")
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(sqlite_path))
+    conn = get_sqlite_connection(sqlite_path, timeout=60.0)
     try:
         conn.executescript(schema_sql)
         _ensure_official_name_column(conn)
@@ -190,7 +191,7 @@ def _prepare_pipeline_run(
 
 
 def _has_ie_progress(sqlite_path: Path) -> bool:
-    conn = sqlite3.connect(str(sqlite_path))
+    conn = get_sqlite_connection(sqlite_path, timeout=60.0)
     try:
         row = conn.execute("SELECT 1 FROM ie_progress LIMIT 1").fetchone()
         return row is not None
@@ -433,9 +434,8 @@ def main() -> None:
     print(f"Applying schema from {schema_path} to {sqlite_path}...")
     apply_schema(sqlite_path, schema_path)
 
-    conn = sqlite3.connect(str(sqlite_path))
+    conn = get_sqlite_connection(sqlite_path, timeout=60.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
 
     run_id = _prepare_pipeline_run(conn, resume=args.resume, restart=args.restart)
     print(f"[pipeline] Using run id {run_id}.")

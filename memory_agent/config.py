@@ -31,6 +31,13 @@ class Neo4jConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class SQLiteConfig:
+    """Configuration for the SQLite database."""
+
+    db_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class LLMConfig:
     """Configuration for the backing LLM provider."""
 
@@ -98,6 +105,7 @@ class Settings:
 
     neo4j: Neo4jConfig
     llm: LLMConfig
+    sqlite: SQLiteConfig
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     message_embeddings: MessageEmbeddingConfig = field(default_factory=MessageEmbeddingConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -136,6 +144,10 @@ class Settings:
             database=os.getenv("NEO4J_DATABASE") or None,
             max_connection_lifetime=int(os.getenv("NEO4J_MAX_CONN_LIFETIME", "60")),
             encrypted=cls._bool_env("NEO4J_ENCRYPTED", False),
+        )
+
+        sqlite = SQLiteConfig(
+            db_path=Path(os.getenv("SQLITE_DB_PATH", "./discord.db")).expanduser(),
         )
 
         model = os.getenv("LLAMA_MODEL", "GLM-4.5-Air")
@@ -203,6 +215,7 @@ class Settings:
         return cls(
             neo4j=neo4j,
             llm=llm,
+            sqlite=sqlite,
             embeddings=embeddings,
             message_embeddings=message_embeddings,
             agent=agent,

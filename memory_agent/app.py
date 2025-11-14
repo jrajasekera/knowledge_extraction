@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -19,39 +16,11 @@ from .config import Settings
 from .embeddings import EmbeddingProvider
 from .llm import LLMClient
 from .models import HealthResponse, RetrievalRequest, RetrievalResponse
+from .request_logger import RequestLogger
 from .tools import ToolContext, build_toolkit
 
 
 logger = logging.getLogger(__name__)
-
-REQUEST_LOG_ROOT = Path(__file__).resolve().parents[1] / "memory_agent_request_logs"
-
-
-def _create_request_log_dir() -> Path:
-    REQUEST_LOG_ROOT.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    entry_dir = REQUEST_LOG_ROOT / f"{timestamp}_{uuid4().hex[:8]}"
-    entry_dir.mkdir(parents=True, exist_ok=True)
-    return entry_dir
-
-
-def _write_log_file(path: Path, payload: Any) -> None:
-    with path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=2)
-
-
-def _log_request(entry_dir: Path, request_body: RetrievalRequest) -> None:
-    try:
-        _write_log_file(entry_dir / "request.json", request_body.model_dump(mode="json"))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to log request payload: %s", exc)
-
-
-def _log_response(entry_dir: Path, payload: Any) -> None:
-    try:
-        _write_log_file(entry_dir / "response.json", payload)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to log response payload: %s", exc)
 
 
 class RateLimiter:
@@ -95,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.tools = None
     app.state.agent = None
     app.state.rate_limiter = RateLimiter(settings.rate_limit.requests, settings.rate_limit.window_seconds)
+    app.state.request_logger = RequestLogger(settings.sqlite.db_path)
 
     @app.on_event("startup")
     async def on_startup() -> None:
@@ -184,36 +154,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/memory/retrieve", response_model=RetrievalResponse)
     async def retrieve_memories(
+        request: Request,
         request_body: RetrievalRequest,
         agent: MemoryAgent = Depends(get_agent),
     ) -> RetrievalResponse:
-        log_entry: Path | None = None
-        try:
-            log_entry = _create_request_log_dir()
-            _log_request(log_entry, request_body)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to prepare request log directory: %s", exc)
+        request_id = uuid4().hex
+        client_ip = request.client.host if request.client else None
+        request_logger: RequestLogger = app.state.request_logger
 
+        # Log request start
+        request_logger.log_request_start(request_id, request_body, client_ip)
+
+        start_time = time.perf_counter()
         try:
             result = await agent.run(request_body)
             response = RetrievalResponse.model_validate(result)
-            if log_entry is not None:
-                _log_response(log_entry, response.model_dump(mode="json"))
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            request_logger.log_request_complete(request_id, response, duration_ms)
             return response
         except HTTPException as exc:
-            if log_entry is not None:
-                _log_response(
-                    log_entry,
-                    {"status": exc.status_code, "detail": exc.detail},
-                )
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            request_logger.log_request_error(request_id, exc.status_code, str(exc.detail), duration_ms)
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("Memory retrieval failed: %s", exc)
-            if log_entry is not None:
-                _log_response(
-                    log_entry,
-                    {"status": status.HTTP_500_INTERNAL_SERVER_ERROR, "detail": str(exc)},
-                )
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            request_logger.log_request_error(
+                request_id, status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc), duration_ms
+            )
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
 
     if settings.api.enable_debug_endpoint:
