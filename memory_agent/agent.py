@@ -184,19 +184,7 @@ def create_memory_agent_graph(
                 return {"queries": [conversation_text[-500:]], "limit": retrieval_limit}
             return None
 
-        def build_person_profile_query() -> dict[str, Any] | None:
-            people_ids = identified.get("people_ids") or []
-            if people_ids:
-                return {"person_id": people_ids[0]}
-            mentions = identified.get("people_mentions") or []
-            if mentions:
-                first = mentions[0]
-                if isinstance(first, dict) and first.get("id"):
-                    return {"person_id": first["id"]}
-            return None
-
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
-            ("get_person_profile", build_person_profile_query),
             ("find_people_by_topic", build_topic_query),
             ("semantic_search_facts", build_semantic_search),
         ]
@@ -207,16 +195,6 @@ def create_memory_agent_graph(
                 return None
             if tool_name == "find_people_by_topic":
                 return {"topic": goal_text}
-            if tool_name == "get_person_profile":
-                people_ids = identified.get("people_ids") or []
-                if people_ids:
-                    return {"person_id": people_ids[0]}
-                mentions = identified.get("people_mentions") or []
-                if mentions:
-                    first = mentions[0]
-                    if isinstance(first, dict) and first.get("id"):
-                        return {"person_id": first["id"]}
-                return None
             if tool_name == "semantic_search_facts":
                 retrieval_limit = state.get("max_facts", config.max_facts)
                 return {"queries": [goal_text], "limit": retrieval_limit}

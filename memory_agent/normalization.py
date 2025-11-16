@@ -92,24 +92,6 @@ def _normalize_semantic_search(output) -> list[RetrievedFact]:
     return facts
 
 
-def _normalize_person_profile(output) -> list[RetrievedFact]:
-    facts = []
-    for fact in output.facts:
-        facts.append(
-            _build_fact(
-                person_id=fact.person_id,
-                person_name=fact.person_name,
-                fact_type=fact.fact_type,
-                fact_object=fact.fact_object,
-                attributes=fact.attributes,
-                confidence=fact.confidence,
-                evidence=fact.evidence,
-                timestamp=fact.timestamp,
-            )
-        )
-    return facts
-
-
 def _normalize_semantic_search_messages(output) -> list[RetrievedFact]:
     facts = []
     for message in output.results:
@@ -153,7 +135,6 @@ def _normalize_semantic_search_messages(output) -> list[RetrievedFact]:
 
 
 TOOL_NORMALIZERS = {
-    "get_person_profile": _normalize_person_profile,
     "find_people_by_topic": _normalize_people_by_topic,
     "semantic_search_facts": _normalize_semantic_search,
     "semantic_search_messages": _normalize_semantic_search_messages,

@@ -36,12 +36,6 @@ llm_latency_seconds = Histogram(
 )
 
 TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
-    "get_person_profile": {
-        "description": "Fetch recent relationships, roles, and associations for a specific person id.",
-        "use_when": "A known person id or mention needs more context or background.",
-        "inputs": "person_id (required)",
-        "example": "Use when the conversation references a Discord user by id and you need their profile facts.",
-    },
     "find_people_by_topic": {
         "description": "Find people who talk about, care about, or are curious about a topic.",
         "use_when": "The goal is about interest or discussion of a subject.",
