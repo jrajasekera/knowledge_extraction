@@ -42,12 +42,6 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "person_id (required)",
         "example": "Use when the conversation references a Discord user by id and you need their profile facts.",
     },
-    "get_relationships_between": {
-        "description": "Show relationships and shared contexts between two people.",
-        "use_when": "The goal compares or connects two specific people.",
-        "inputs": "person_a_id (required), person_b_id (required)",
-        "example": "Use when asked 'How do Alice and Bob know each other?'",
-    },
     "find_people_by_topic": {
         "description": "Find people who talk about, care about, or are curious about a topic.",
         "use_when": "The goal is about interest or discussion of a subject.",
