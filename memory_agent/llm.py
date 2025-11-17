@@ -288,10 +288,10 @@ class LLMClient:
             }
 
     async def extract_message_search_queries(
-        self,
-        messages: list[MessageModel],
-        *,
-        max_queries: int = 15,
+            self,
+            messages: list[MessageModel],
+            *,
+            max_queries: int = 15,
     ) -> list[str]:
         """Derive diverse search phrases for message retrieval from recent conversation."""
 
@@ -299,24 +299,38 @@ class LLMClient:
             return []
 
         capped = max(1, min(max_queries, 15))
-        recent_messages = messages[-6:]
-        conversation_text = "\n".join(
-            f"{msg.author_name}: {msg.content}" for msg in recent_messages
-        )
+
+        # Separate last message from conversation history
+        last_message = messages[-1]
+        history_messages = messages[-6:-1] if len(messages) > 1 else []
+
+        last_message_text = f"{last_message.author_name}: {last_message.content}"
+        history_text = "\n".join(
+            f"{msg.author_name}: {msg.content}" for msg in history_messages
+        ) if history_messages else "(No previous messages)"
 
         prompt = (
             "You assist with retrieving relevant historical Discord messages via semantic search.\n"
-            "Given the recent conversation, propose a wide range of search queries (keywords or phrases) that a vector index can use.\n"
+            "Your task: Generate diverse search queries based EXCLUSIVELY on the LAST MESSAGE below.\n"
+            "Use the conversation history ONLY for context to understand references, but ALL queries must address the last message.\n\n"
+
+            "## Previous Conversation (context only - for understanding references):\n"
+            f"```\n{history_text}\n```\n\n"
+
+            "## LAST MESSAGE (PRIMARY FOCUS - generate queries for THIS only):\n"
+            f"```\n{last_message_text}\n```\n\n"
+
+            "## Your Task:\n"
+            "Generate search queries to find historical messages relevant to the LAST MESSAGE.\n"
             "Focus on distinct perspectives: core topic, sub-topics, follow-up actions, stakeholders, artifacts, locations, timelines, and synonyms.\n"
             "Produce a mix of lengths: include some concise 1-3 word keywords, some medium phrases (4-8 words), and several fuller descriptive sentences up to 20 words.\n"
-            "Avoid filler like 'search for' and keep every query grounded in the conversation context.\n\n"
-            "## Recent Conversation\n"
-            f"{conversation_text or 'No recent messages.'}\n\n"
+            "Avoid filler like 'search for' and keep every query grounded in the LAST MESSAGE's context.\n\n"
+
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
             "}\n\n"
-            f"Include between 12 and {capped} entries whenever possible; if context is sparse, return as many high-quality queries as you can."
+            f"Include between 12 and {capped} entries whenever possible; if the last message is sparse, return as many high-quality queries as you can."
         )
 
         try:
@@ -348,10 +362,10 @@ class LLMClient:
         return cleaned
 
     async def extract_fact_search_queries(
-        self,
-        messages: list[MessageModel],
-        *,
-        max_queries: int = 15,
+            self,
+            messages: list[MessageModel],
+            *,
+            max_queries: int = 15,
     ) -> list[str]:
         """Derive diverse search queries for fact retrieval from recent conversation."""
 
@@ -359,44 +373,58 @@ class LLMClient:
             return []
 
         capped = max(1, min(max_queries, 20))
-        recent_messages = messages[-6:]
-        conversation_text = "\n".join(
-            f"{msg.author_name}: {msg.content}" for msg in recent_messages
-        )
+
+        # Separate last message from conversation history
+        last_message = messages[-1]
+        history_messages = messages[-6:-1] if len(messages) > 1 else []
+
+        last_message_text = f"{last_message.author_name}: {last_message.content}"
+        history_text = "\n".join(
+            f"{msg.author_name}: {msg.content}" for msg in history_messages
+        ) if history_messages else "(No previous messages)"
 
         prompt = (
             "You assist with retrieving relevant facts about people via semantic search.\n"
-            "Given the recent conversation, propose a VERY DIVERSE range of search queries to find ALL relevant facts.\n"
+            "Your task: Generate diverse search queries based EXCLUSIVELY on the LAST MESSAGE below.\n"
+            "Use the conversation history ONLY for context to understand references, but ALL queries must address the last message.\n\n"
+
+            "## Previous Conversation (context only - for understanding references):\n"
+            f"```\n{history_text}\n```\n\n"
+
+            "## LAST MESSAGE (PRIMARY FOCUS - generate queries for THIS only):\n"
+            f"```\n{last_message_text}\n```\n\n"
+
+            "## Your Task:\n"
+            "Generate 15-20 search queries that find facts relevant to answering or addressing the LAST MESSAGE.\n"
             "Facts include: employment, skills, education, relationships, interests, preferences, locations, and experiences.\n\n"
 
             "## CRITICAL: Generate queries from MULTIPLE ANGLES:\n"
-            "1. **Direct keywords** from the conversation\n"
+            "1. **Direct keywords** from the LAST MESSAGE\n"
             "2. **Synonyms and related terms** (e.g., 'startup' → 'founder', 'entrepreneur', 'early-stage company')\n"
             "3. **Broader concepts** (e.g., 'React' → 'frontend development', 'JavaScript frameworks')\n"
             "4. **Narrower specifics** (e.g., 'AI' → 'machine learning', 'neural networks', 'LLMs')\n"
             "5. **Related skills/topics** (e.g., 'Python' → 'data science', 'backend development')\n"
             "6. **Job titles and roles** (e.g., 'engineering' → 'software engineer', 'tech lead', 'CTO')\n"
-            "7. **Organizations and companies** mentioned or implied\n"
+            "7. **Organizations and companies** mentioned or implied in the LAST MESSAGE\n"
             "8. **Technologies and tools** (specific versions, alternatives, competitors)\n"
             "9. **Domain areas** (industries, fields, specializations)\n"
-            "10. **People mentioned** by name or reference\n\n"
+            "10. **People mentioned** in the LAST MESSAGE by name or reference\n\n"
 
             "## IMPORTANT RULES:\n"
+            "- ALL queries must be relevant to the LAST MESSAGE specifically\n"
             "- Generate 15-20 queries to maximize coverage\n"
             "- Mix lengths: 1-3 words (keywords), 4-8 words (phrases), up to 20 words (descriptive sentences)\n"
-            "- Include both specific and general terms\n"
-            "- Think about what facts MIGHT be relevant, not just obvious connections\n"
+            "- Include both specific and general terms from the LAST MESSAGE\n"
+            "- Think about what facts MIGHT be relevant to the LAST MESSAGE, not just obvious connections\n"
             "- Avoid duplicate or near-duplicate queries\n"
-            "- Don't include 'search for' or other meta-language\n\n"
-
-            "## Recent Conversation\n"
-            f"{conversation_text or 'No recent messages.'}\n\n"
+            "- Don't include 'search for' or other meta-language\n"
+            "- If the last message references something from earlier (e.g., 'that project', 'the company we discussed'), use the history to understand WHAT is being referenced, then query for that thing\n\n"
 
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
             "}\n\n"
-            f"Generate {capped} diverse queries:"
+            f"Generate {capped} diverse queries based on the LAST MESSAGE:"
         )
 
         try:
@@ -508,7 +536,7 @@ class LLMClient:
             f"## Tool History\n{tool_history}\n\n"
 
             "## Decision Criteria\n"
-            "**Continue searching if:**\n"
+            "**Continue searching IFF:**\n"
             "- Fewer than 5 iterations completed (need more exploration)\n"
             "- Recent tool calls are still finding new facts\n"
             "- The goal asks about multiple aspects and we've only covered some\n"
