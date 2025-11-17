@@ -155,13 +155,25 @@ async def generate_context_summary(
             "You are a helpful assistant that analyzes conversations and provides relevant historical context. "
             "Generate detailed, natural paragraph summaries focusing only on information relevant to the current discussion."
         )
-        summary = await llm.agenerate_text(prompt, system_message=system_message)
 
-        # Clean up the response
-        summary = summary.strip()
+        # Retry up to 2 times if LLM returns empty/blank response
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            summary = await llm.agenerate_text(prompt, system_message=system_message)
+            summary = summary.strip()
 
-        logger.info("Generated context summary: %s", summary)
-        return summary
+            # Check if we got a non-empty response
+            if summary:
+                logger.info("Generated context summary on attempt %d: %s", attempt + 1, summary)
+                return summary
+
+            # Log empty response and retry if attempts remain
+            if attempt < max_retries:
+                logger.warning("LLM returned empty response on attempt %d, retrying...", attempt + 1)
+            else:
+                logger.warning("LLM returned empty response after %d attempts", max_retries + 1)
+
+        return ""
 
     except Exception as exc:
         logger.error("Failed to generate context summary: %s", exc, exc_info=True)
