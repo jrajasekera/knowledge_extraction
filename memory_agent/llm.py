@@ -366,18 +366,37 @@ class LLMClient:
 
         prompt = (
             "You assist with retrieving relevant facts about people via semantic search.\n"
-            "Given the recent conversation, propose a wide range of search queries (keywords or phrases) to find relevant facts.\n"
-            "Facts include: employment, skills, education, relationships, interests, preferences, locations, and experiences.\n"
-            "Focus on distinct perspectives: direct keywords, synonyms, related concepts, job titles, organizations, technologies, topics, and descriptive phrases.\n"
-            "Produce a mix of lengths: include some concise 1-3 word keywords, some medium phrases (4-8 words), and several fuller descriptive sentences up to 20 words.\n"
-            "Avoid filler like 'search for' and keep every query grounded in the conversation context.\n\n"
+            "Given the recent conversation, propose a VERY DIVERSE range of search queries to find ALL relevant facts.\n"
+            "Facts include: employment, skills, education, relationships, interests, preferences, locations, and experiences.\n\n"
+
+            "## CRITICAL: Generate queries from MULTIPLE ANGLES:\n"
+            "1. **Direct keywords** from the conversation\n"
+            "2. **Synonyms and related terms** (e.g., 'startup' → 'founder', 'entrepreneur', 'early-stage company')\n"
+            "3. **Broader concepts** (e.g., 'React' → 'frontend development', 'JavaScript frameworks')\n"
+            "4. **Narrower specifics** (e.g., 'AI' → 'machine learning', 'neural networks', 'LLMs')\n"
+            "5. **Related skills/topics** (e.g., 'Python' → 'data science', 'backend development')\n"
+            "6. **Job titles and roles** (e.g., 'engineering' → 'software engineer', 'tech lead', 'CTO')\n"
+            "7. **Organizations and companies** mentioned or implied\n"
+            "8. **Technologies and tools** (specific versions, alternatives, competitors)\n"
+            "9. **Domain areas** (industries, fields, specializations)\n"
+            "10. **People mentioned** by name or reference\n\n"
+
+            "## IMPORTANT RULES:\n"
+            "- Generate 15-20 queries to maximize coverage\n"
+            "- Mix lengths: 1-3 words (keywords), 4-8 words (phrases), up to 20 words (descriptive sentences)\n"
+            "- Include both specific and general terms\n"
+            "- Think about what facts MIGHT be relevant, not just obvious connections\n"
+            "- Avoid duplicate or near-duplicate queries\n"
+            "- Don't include 'search for' or other meta-language\n\n"
+
             "## Recent Conversation\n"
             f"{conversation_text or 'No recent messages.'}\n\n"
+
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
             "}\n\n"
-            f"Include between 12 and {capped} entries whenever possible; if context is sparse, return as many high-quality queries as you can."
+            f"Generate {capped} diverse queries:"
         )
 
         try:
@@ -480,19 +499,38 @@ class LLMClient:
 
         facts_summary = self._summarize_retrieved_facts(retrieved_facts)
         tool_history = self._format_tool_history(tool_calls)
+
         prompt = (
             "Determine whether the agent should continue searching for more information or stop.\n\n"
             f"## Goal\n{goal or 'Goal unspecified.'}\n\n"
             f"## Iteration\n{current_iteration}/{max_iterations}\n\n"
-            f"## Retrieved Facts\n{facts_summary}\n\n"
+            f"## Retrieved Facts ({len(retrieved_facts)} total)\n{facts_summary}\n\n"
             f"## Tool History\n{tool_history}\n\n"
+
+            "## Decision Criteria\n"
+            "**Continue searching if:**\n"
+            "- Fewer than 5 iterations completed (need more exploration)\n"
+            "- Recent tool calls are still finding new facts\n"
+            "- The goal asks about multiple aspects and we've only covered some\n"
+            "- Facts seem incomplete or partial\n"
+            "- Different search terms might reveal more relevant information\n\n"
+
+            "**Stop searching if:**\n"
+            "- We've tried 10+ iterations with diminishing returns\n"
+            "- Last 3 tool calls returned 0 results\n"
+            "- Retrieved facts comprehensively address all aspects of the goal\n"
+            "- We've exhausted different search strategies\n\n"
+
             "## Output Format\n"
             "{\n"
             '  "should_continue": true,\n'
             '  "confidence": "high",\n'
-            '  "reasoning": "",\n'
-            '  "recommendations": []\n'
-            "}\n\nRespond with JSON only."
+            '  "reasoning": "Explain why we should continue/stop",\n'
+            '  "recommendations": ["suggest next search strategies if continuing"]\n'
+            "}\n\n"
+
+            "Be CONSERVATIVE about stopping - err on the side of searching more.\n"
+            "Respond with JSON only."
         )
 
         response = await asyncio.to_thread(self._llama_predict, prompt)
