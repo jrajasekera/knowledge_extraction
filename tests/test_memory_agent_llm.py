@@ -41,13 +41,13 @@ def test_tool_catalog_generation_includes_known_tools():
     context = ToolContext(driver=DummyDriver())
     catalog = client._build_tool_catalog(
         {
-            "find_people_by_topic": DummyTool(context),
             "semantic_search_facts": DummyTool(context),
+            "semantic_search_messages": DummyTool(context),
         }
     )
 
-    assert "find_people_by_topic" in catalog
     assert "semantic_search_facts" in catalog
+    assert "semantic_search_messages" in catalog
     assert "Description" in catalog
     assert "Use When" in catalog
 

@@ -36,12 +36,6 @@ llm_latency_seconds = Histogram(
 )
 
 TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
-    "find_people_by_topic": {
-        "description": "Find people who talk about, care about, or are curious about a topic.",
-        "use_when": "The goal is about interest or discussion of a subject.",
-        "inputs": "topic (required), relationship_types, limit (optional)",
-        "example": "Use when asked 'Who is into climate change research?'",
-    },
     "semantic_search_facts": {
         "description": "Perform semantic search using multiple diverse queries (12-15) to find relevant facts across all types. Uses Reciprocal Rank Fusion (RRF) to intelligently combine results.",
         "use_when": "The goal requires broad discovery across fact types, or when searching for concepts using varied keywords and phrases. RRF will boost facts that appear in multiple query results.",
@@ -653,7 +647,7 @@ class LLMClient:
             "If you decide no tool should run, set should_stop to true and explain why in stop_reason.\n\n"
             "### Examples\n"
             "1. Goal: 'Goal already answered' -> should_stop true\n"
-            "2. Goal: 'Who is into climate research?' -> find_people_by_topic\n\n"
+            "2. Goal: 'Who has experience with startups?' -> semantic_search_facts\n\n"
             "Respond now with JSON only."
         )
         return prompt

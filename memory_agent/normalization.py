@@ -52,28 +52,6 @@ def normalize_to_facts(tool_name: str, payload) -> list[RetrievedFact]:
     return handler(payload)
 
 
-def _normalize_people_by_topic(output) -> list[RetrievedFact]:
-    facts = []
-    for person in output.people:
-        attributes = {"relationship_type": person.relationship_type}
-        if person.sentiment:
-            attributes["sentiment"] = person.sentiment
-        if person.details:
-            attributes.update(person.details)
-        facts.append(
-            _build_fact(
-                person_id=person.person_id,
-                person_name=person.name,
-                fact_type="TOPIC_RELATIONSHIP",
-                fact_object=output.topic,
-                attributes=attributes,
-                confidence=person.confidence,
-                evidence=person.evidence,
-            )
-        )
-    return facts
-
-
 def _normalize_semantic_search(output) -> list[RetrievedFact]:
     facts = []
     for result in output.results:
@@ -135,7 +113,6 @@ def _normalize_semantic_search_messages(output) -> list[RetrievedFact]:
 
 
 TOOL_NORMALIZERS = {
-    "find_people_by_topic": _normalize_people_by_topic,
     "semantic_search_facts": _normalize_semantic_search,
     "semantic_search_messages": _normalize_semantic_search_messages,
 }

@@ -169,15 +169,6 @@ def create_memory_agent_graph(
         retrieved = state.get("retrieved_facts", [])
         retrieved_people = {fact.person_id for fact in retrieved}
 
-        def build_topic_query() -> dict[str, Any] | None:
-            topics = identified.get("topics") or []
-            if topics:
-                return {"topic": topics[0]}
-            topic = extract_topic(conversation_text)
-            if topic:
-                return {"topic": topic}
-            return None
-
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:
                 retrieval_limit = state.get("max_facts", config.max_facts)
@@ -185,7 +176,6 @@ def create_memory_agent_graph(
             return None
 
         heuristics: list[tuple[str, Callable[[], dict[str, Any] | None]]] = [
-            ("find_people_by_topic", build_topic_query),
             ("semantic_search_facts", build_semantic_search),
         ]
 
@@ -193,8 +183,6 @@ def create_memory_agent_graph(
             goal_text = state.get("current_goal") or conversation_text
             if not goal_text:
                 return None
-            if tool_name == "find_people_by_topic":
-                return {"topic": goal_text}
             if tool_name == "semantic_search_facts":
                 retrieval_limit = state.get("max_facts", config.max_facts)
                 return {"queries": [goal_text], "limit": retrieval_limit}
