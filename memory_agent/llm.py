@@ -254,13 +254,44 @@ class LLMClient:
                 "implicit_references": [],
             }
 
-        conversation_text = "\n".join(
-            f"{message.author_name}: {message.content}" for message in messages[-5:]
-        )
+        # Separate last message from conversation history
+        last_message = messages[-1]
+        history_messages = messages[-6:-1] if len(messages) > 1 else []
+
+        last_message_text = f"{last_message.author_name}: {last_message.content}"
+        history_text = "\n".join(
+            f"{msg.author_name}: {msg.content}" for msg in history_messages
+        ) if history_messages else "(No previous messages)"
+
         prompt = (
-            "Analyze the following Discord conversation and extract mentioned entities.\n\n"
-            "## Conversation\n"
-            f"{conversation_text or 'No recent messages.'}\n\n"
+            "Extract entities from a Discord conversation, focusing EXCLUSIVELY on the LAST MESSAGE.\n"
+            "Use the conversation history ONLY for context to understand references.\n\n"
+
+            "## Previous Conversation (context only - for understanding references):\n"
+            f"```\n{history_text}\n```\n\n"
+
+            "## LAST MESSAGE (PRIMARY FOCUS - extract entities from THIS only):\n"
+            f"```\n{last_message_text}\n```\n\n"
+
+            "## Your Task:\n"
+            "Extract entities mentioned or implied in the LAST MESSAGE.\n"
+            "If the last message references something from earlier (e.g., 'that person', 'the company we discussed'), "
+            "use the history to identify WHAT is being referenced, then include that entity.\n\n"
+
+            "## Entity Types:\n"
+            "- **people**: Names of people or Discord mentions\n"
+            "- **organizations**: Companies, institutions, projects, or groups\n"
+            "- **topics**: Subjects, technologies, concepts being discussed\n"
+            "- **locations**: Places, cities, countries, or regions\n"
+            "- **skills**: Technical skills, programming languages, or competencies\n"
+            "- **implicit_references**: Pronouns or references that need context (e.g., 'that project', 'the company')\n\n"
+
+            "## Rules:\n"
+            "- ALL entities must come from or be referenced in the LAST MESSAGE\n"
+            "- If the last message says 'he', 'she', 'they', 'it', 'that company', etc., use history to identify the referent\n"
+            "- Don't extract entities from history unless they're referenced in the last message\n"
+            "- Return empty arrays if no entities of a type are found\n\n"
+
             "## Output Format\n"
             "{\n"
             '  "people": [],\n'
