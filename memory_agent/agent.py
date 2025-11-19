@@ -118,56 +118,26 @@ def create_memory_agent_graph(
 
     async def analyze_conversation(state: AgentState) -> AgentState:
         logger.info("Analyzing conversation for channel %s", state.get("channel_id"))
-        insights = extract_insights(state["conversation"])
-        goal = insights.questions[0] if insights.questions else "Collect relevant context."
-        llm_entities: dict[str, Any] = {}
+
+        # Use LLM to extract goal from conversation (focusing on last message)
         if llm and llm.is_available:
-            try:
-                llm_entities = await llm.extract_entities_from_conversation(state["conversation"])
-            except Exception as exc:  # noqa: BLE001
-                logger.info("LLM entity extraction failed: %s", exc)
+            goal = await llm.extract_goal_from_conversation(state["conversation"])
+        else:
+            # Fallback to simple question detection if LLM unavailable
+            insights = extract_insights(state["conversation"])
+            goal = insights.questions[-1] if insights.questions else "Collect relevant context."
 
-        people_ids = set(insights.people)
-        organizations = set(filter(None, insights.organizations))
-        topics = set(filter(None, insights.topics))
-
-        if llm_entities:
-            organizations.update(
-                entity for entity in llm_entities.get("organizations", []) if isinstance(entity, str) and entity
-            )
-            topics.update(
-                entity for entity in llm_entities.get("topics", []) if isinstance(entity, str) and entity
-            )
-
-        identified = {
-            "people_ids": list(people_ids),
-            "organizations": [org for org in organizations if org],
-            "topics": [topic for topic in topics if topic],
-        }
-        if llm_entities.get("people"):
-            identified["people_mentions"] = llm_entities["people"]
-        if llm_entities.get("locations"):
-            identified["locations"] = llm_entities["locations"]
-
-        logger.info("Identified entities: %s", identified)
         logger.info("Initial goal: %s", goal)
         trace = update_reasoning(state, f"Set goal: {goal}")
-        if llm_entities:
-            trace = update_reasoning({"reasoning_trace": trace}, "Captured entities via LLM analysis")
         return {
-            "identified_entities": identified,
             "current_goal": goal,
             "retrieved_facts": list(state.get("retrieved_facts", [])),
             "tool_calls": list(state.get("tool_calls", [])),
             "reasoning_trace": trace,
-            "entity_extraction_results": llm_entities,
         }
 
     def determine_tool_from_goal(state: AgentState, preferred_tool: str | None = None) -> dict[str, Any] | None:
         conversation_text = " ".join(msg.content for msg in state["conversation"]).lower()
-        identified = state.get("identified_entities", {})
-        retrieved = state.get("retrieved_facts", [])
-        retrieved_people = {fact.person_id for fact in retrieved}
 
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:

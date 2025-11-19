@@ -243,16 +243,22 @@ class LLMClient:
             logger.warning("Tool planning failed: %s", exc)
             return self._fallback_tool_selection(available_tools, state, heuristic_candidate)
 
-    async def extract_entities_from_conversation(self, messages: list[MessageModel]) -> dict[str, Any]:
-        if not self.is_available:
-            return {
-                "people": [],
-                "organizations": [],
-                "topics": [],
-                "locations": [],
-                "skills": [],
-                "implicit_references": [],
-            }
+    async def extract_goal_from_conversation(self, messages: list[MessageModel]) -> str:
+        """Determine the user's information retrieval goal from the conversation.
+
+        Analyzes the conversation (focusing on the last message) to determine what
+        information the user is seeking. Returns a clear, actionable goal for the
+        memory agent, or indicates if no retrieval is needed.
+
+        Args:
+            messages: List of conversation messages
+
+        Returns:
+            A clear goal string (e.g., "Find people with Kubernetes experience")
+            or "No retrieval needed" if the conversation doesn't require information lookup
+        """
+        if not self.is_available or not messages:
+            return "Collect relevant context."
 
         # Separate last message from conversation history
         last_message = messages[-1]
@@ -264,59 +270,78 @@ class LLMClient:
         ) if history_messages else "(No previous messages)"
 
         prompt = (
-            "Extract entities from a Discord conversation, focusing EXCLUSIVELY on the LAST MESSAGE.\n"
-            "Use the conversation history ONLY for context to understand references.\n\n"
+            "Analyze a Discord conversation to determine if the user needs information retrieval.\n"
+            "Focus EXCLUSIVELY on the LAST MESSAGE to understand what the user wants NOW.\n"
+            "Use conversation history ONLY for context to understand references.\n\n"
 
             "## Previous Conversation (context only - for understanding references):\n"
             f"```\n{history_text}\n```\n\n"
 
-            "## LAST MESSAGE (PRIMARY FOCUS - extract entities from THIS only):\n"
+            "## LAST MESSAGE (PRIMARY FOCUS - what does THIS message need?):\n"
             f"```\n{last_message_text}\n```\n\n"
 
             "## Your Task:\n"
-            "Extract entities mentioned or implied in the LAST MESSAGE.\n"
-            "If the last message references something from earlier (e.g., 'that person', 'the company we discussed'), "
-            "use the history to identify WHAT is being referenced, then include that entity.\n\n"
+            "Determine if the LAST MESSAGE requires retrieving information about people, their skills, experiences, or activities.\n\n"
 
-            "## Entity Types:\n"
-            "- **people**: Names of people or Discord mentions\n"
-            "- **organizations**: Companies, institutions, projects, or groups\n"
-            "- **topics**: Subjects, technologies, concepts being discussed\n"
-            "- **locations**: Places, cities, countries, or regions\n"
-            "- **skills**: Technical skills, programming languages, or competencies\n"
-            "- **implicit_references**: Pronouns or references that need context (e.g., 'that project', 'the company')\n\n"
+            "## Information-Seeking Indicators:\n"
+            "- Questions about people: 'Who knows X?', 'Does anyone have Y experience?'\n"
+            "- Requests for information: 'Tell me about...', 'I need to find...', 'Looking for...'\n"
+            "- Implicit needs: 'We need someone with X skills', 'Anyone familiar with Y?'\n"
+            "- Follow-ups referencing prior context: 'What about them?', 'Tell me more'\n\n"
 
-            "## Rules:\n"
-            "- ALL entities must come from or be referenced in the LAST MESSAGE\n"
-            "- If the last message says 'he', 'she', 'they', 'it', 'that company', etc., use history to identify the referent\n"
-            "- Don't extract entities from history unless they're referenced in the last message\n"
-            "- Return empty arrays if no entities of a type are found\n\n"
+            "## NOT Information-Seeking:\n"
+            "- Casual chat: 'Hey', 'Thanks!', 'Sounds good'\n"
+            "- Rhetorical questions: 'Is it Friday yet?', 'Why is this so hard?'\n"
+            "- Statements of fact: 'I finished the project', 'The meeting is at 3pm'\n"
+            "- Commands/actions: 'Please update the docs', 'Can you review my PR?'\n\n"
 
-            "## Output Format\n"
-            "{\n"
-            '  "people": [],\n'
-            '  "organizations": [],\n'
-            '  "topics": [],\n'
-            '  "locations": [],\n'
-            '  "skills": [],\n'
-            '  "implicit_references": []\n'
-            "}\n\nReturn JSON only (no markdown)."
+            "## Output Rules:\n"
+            "If the last message seeks information about people/skills/experiences:\n"
+            "- Write a clear, specific goal for the memory agent (10-30 words)\n"
+            "- Focus on WHAT information to retrieve, not HOW to retrieve it\n"
+            "- Use action verbs: 'Find', 'Identify', 'Locate', 'Determine'\n"
+            "- Be specific about what's being sought (skills, people, experiences, etc.)\n\n"
+
+            "If the last message does NOT seek retrievable information:\n"
+            "- Return exactly: 'No retrieval needed'\n\n"
+
+            "## Examples:\n"
+            "Last: 'Who knows Rust?'\n"
+            "Goal: 'Find people with Rust programming experience'\n\n"
+
+            "Last: 'Does anyone have experience with Kubernetes in production?'\n"
+            "Goal: 'Identify people with production Kubernetes deployment experience'\n\n"
+
+            "Last: 'Tell me about the AI team members'\n"
+            "Goal: 'Find people who work on or are associated with AI projects'\n\n"
+
+            "Last: 'What about that person we discussed?'\n"
+            "Goal: 'Retrieve information about [resolve reference from history]'\n\n"
+
+            "Last: 'Thanks for the help!'\n"
+            "Goal: 'No retrieval needed'\n\n"
+
+            "Last: 'Is it Friday yet?'\n"
+            "Goal: 'No retrieval needed'\n\n"
+
+            "Return ONLY the goal text (no JSON, no markdown, just the plain goal statement)."
         )
 
-        response = await asyncio.to_thread(self._llama_predict, prompt)
-        response_clean = self._normalize_json_response(response)
         try:
-            return json.loads(response_clean)
+            response = await asyncio.to_thread(self._llama_predict, prompt)
+            goal = response.strip()
+
+            # Validate we got a reasonable response
+            if not goal or len(goal) > 200:
+                logger.warning("Invalid goal extraction response, using fallback")
+                return "Collect relevant context."
+
+            logger.info("Extracted goal: %s", goal)
+            return goal
+
         except Exception:  # noqa: BLE001
-            logger.warning("LLM entity extraction failed", exc_info=True)
-            return {
-                "people": [],
-                "organizations": [],
-                "topics": [],
-                "locations": [],
-                "skills": [],
-                "implicit_references": [],
-            }
+            logger.warning("LLM goal extraction failed", exc_info=True)
+            return "Collect relevant context."
 
     async def extract_message_search_queries(
             self,
@@ -700,7 +725,6 @@ class LLMClient:
         latest_message = self._latest_message(state.get("conversation", []))
         retrieved_facts_summary = self._summarize_retrieved_facts(state.get("retrieved_facts", []))
         tool_history = self._format_tool_history(state.get("tool_calls", []))
-        entities = state.get("identified_entities", {})
         reasoning_trace = state.get("reasoning_trace", [])
         recent_reasoning = reasoning_trace[-5:]
         catalog_key = "tool_catalog::" + ",".join(sorted(available_tools.keys()))
@@ -718,10 +742,6 @@ class LLMClient:
             "## Recent Conversation (newest last)\n"
             f"{conversation_summary}\n\n"
             "Always prioritize the most recent message when determining the next action, using earlier turns only for additional context.\n\n"
-            "## Identified Entities\n"
-            f"- People: {', '.join(entities.get('people_ids', [])) or 'None'}\n"
-            f"- Organizations: {', '.join(entities.get('organizations', [])) or 'None'}\n"
-            f"- Topics: {', '.join(entities.get('topics', [])) or 'None'}\n\n"
             "## Retrieved Facts\n"
             f"{retrieved_facts_summary}\n\n"
             "## Tool Call History\n"
