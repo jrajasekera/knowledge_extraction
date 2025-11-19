@@ -13,6 +13,8 @@ wheels/
 .env
 db_backups/discord_backup.db
 db_backups
+discord.db-shm
+discord.db-wal
 
 .idea/
 data/sample.json

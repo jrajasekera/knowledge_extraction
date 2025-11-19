@@ -72,8 +72,9 @@ def format_fact_for_embedding_text(
     fact_type: str,
     fact_object: str | None,
     attributes: dict[str, Any],
+    evidence_text: Iterable[str] | None = None,
 ) -> str:
-    """Render a fact into a concise embedding-friendly string."""
+    """Render a fact into a concise embedding-friendly string with optional evidence context."""
     cleaned_person = person_name or "Unknown person"
     relation = fact_type.replace("_", " ").lower()
     components = [cleaned_person, relation]
@@ -86,6 +87,21 @@ def format_fact_for_embedding_text(
         if value in (None, "", []):
             continue
         attribute_items.append(f"{key}={value}")
+
+    result = base
     if attribute_items:
-        return f"{base}. " + ", ".join(attribute_items)
-    return base
+        result = f"{base}. " + ", ".join(attribute_items)
+
+    # Include evidence messages if available (truncated for embedding efficiency)
+    if evidence_text:
+        # Take up to 5 evidence messages, truncate each to 200 chars
+        evidence_snippets = []
+        for msg in list(evidence_text)[:5]:
+            if msg:
+                snippet = msg if len(msg) <= 200 else msg[:197] + "..."
+                evidence_snippets.append(snippet)
+        if evidence_snippets:
+            evidence_str = " | ".join(evidence_snippets)
+            result = f"{result}. Evidence: {evidence_str}"
+
+    return result

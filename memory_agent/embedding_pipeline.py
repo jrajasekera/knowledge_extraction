@@ -31,6 +31,7 @@ class GraphFact:
     attributes: dict[str, Any]
     confidence: float | None
     evidence: Sequence[str]
+    evidence_text: Sequence[str]
     target_labels: Sequence[str]
 
 
@@ -63,6 +64,11 @@ def fetch_graph_facts(session: Session) -> list[GraphFact]:
         """
         MATCH (person:Person)-[r]->(target)
         WHERE r.factId IS NOT NULL
+        WITH person, r, target, r.evidence AS evidence_ids
+        OPTIONAL MATCH (author:Person)-[:SENT]->(msg:Message)
+        WHERE msg.id IN evidence_ids
+        WITH person, r, target, evidence_ids,
+             collect(coalesce(author.realName, author.name, author.id) + ': ' + msg.content) AS evidence_texts
         RETURN
             r.factId AS fact_id,
             person.id AS person_id,
@@ -70,14 +76,17 @@ def fetch_graph_facts(session: Session) -> list[GraphFact]:
             type(r) AS fact_type,
             coalesce(target.name, target.label, target.title, target.id) AS fact_object,
             properties(r) AS relationship_properties,
-            labels(target) AS target_labels
+            labels(target) AS target_labels,
+            evidence_ids,
+            evidence_texts
         """
     )
     facts: list[GraphFact] = []
     for row in result:
         rel_props = dict(row["relationship_properties"] or {})
         confidence = rel_props.get("confidence")
-        evidence = rel_props.get("evidence") or []
+        evidence = list(row["evidence_ids"] or [])
+        evidence_text = list(row["evidence_texts"] or [])
         attributes = {
             key: value
             for key, value in rel_props.items()
@@ -92,7 +101,8 @@ def fetch_graph_facts(session: Session) -> list[GraphFact]:
                 fact_object=row["fact_object"],
                 attributes=attributes,
                 confidence=confidence,
-                evidence=list(evidence),
+                evidence=evidence,
+                evidence_text=evidence_text,
                 target_labels=list(row["target_labels"] or []),
             )
         )
@@ -121,6 +131,7 @@ def generate_embeddings(
                 fact_type=fact.fact_type,
                 fact_object=fact.fact_object,
                 attributes=fact.attributes,
+                evidence_text=fact.evidence_text,
             )
             for fact in chunk
         ]
