@@ -118,9 +118,10 @@ def _json_dumps(data: Any) -> str:
     return json.dumps(data, sort_keys=True, default=str)
 
 
-def ensure_vector_index(session: Session) -> None:
-    """Ensure the message embedding vector index exists."""
+def ensure_indices(session: Session) -> None:
+    """Ensure both vector and fulltext indices for message hybrid search exist."""
 
+    # Vector index for semantic search
     logger.info("Ensuring Neo4j vector index %s exists", VECTOR_INDEX_NAME)
     session.run(
         f"""
@@ -133,6 +134,16 @@ def ensure_vector_index(session: Session) -> None:
                 `vector.similarity_function`: 'cosine'
             }}
         }}
+        """
+    )
+
+    # Fulltext index for keyword/exact matching
+    logger.info("Ensuring Neo4j fulltext index message_fulltext exists")
+    session.run(
+        """
+        CREATE FULLTEXT INDEX message_fulltext IF NOT EXISTS
+        FOR (m:MessageEmbedding)
+        ON EACH [m.content, m.clean_content, m.author_name, m.channel_name, m.guild_name]
         """
     )
 
@@ -356,7 +367,7 @@ def run_message_embedding_pipeline(
         "cleaned_orphans": 0,
     }
     with driver.session(**_session_kwargs(database)) as session:
-        ensure_vector_index(session)
+        ensure_indices(session)
         messages = fetch_graph_messages(session)
     summary["messages_scanned"] = len(messages)
     if not messages:

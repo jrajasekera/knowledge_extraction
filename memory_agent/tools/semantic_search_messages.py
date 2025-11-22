@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..embeddings import EmbeddingProvider
 from .base import ToolBase, ToolContext, ToolError
-from .utils import run_vector_query
+from .utils import run_keyword_query, run_vector_query
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,9 @@ DEFAULT_MULTI_QUERY_BOOST = 0.0
 RRF_K = 60
 BLACKLIST_ENV_VAR = "SEMANTIC_MESSAGE_BLACKLIST_PATH"
 _DEFAULT_BLACKLIST_PATH = Path(__file__).resolve().parent.parent / "assets" / "semantic_message_blacklist.json"
+
+# Hybrid search: offset for keyword query indices to treat them as separate "voters" in RRF
+KEYWORD_QUERY_OFFSET = 1000
 
 
 def _load_blacklisted_content() -> set[str]:
@@ -254,28 +257,57 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         for query_idx, query in enumerate(input_data.queries, 1):
             logger.info("Processing query %d/%d: %r", query_idx, len(input_data.queries), query)
 
+            # --- HYBRID SEARCH: Execute both vector and keyword searches ---
+
+            # 1. Vector Search
+            vector_rows = []
             embedding = self.embeddings.embed_single(query)
-            if not embedding:
+            if embedding:
+                logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
+                try:
+                    vector_rows = run_vector_query(
+                        self.context,
+                        self.index_name,
+                        embedding,
+                        input_data.results_per_query,
+                        filters,
+                        include_evidence=False,
+                    )
+                    logger.info("Query %d vector search returned %d results", query_idx, len(vector_rows))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Query %d vector search failed: %s", query_idx, exc)
+            else:
                 logger.warning("Failed to generate embedding for query %d: %r", query_idx, query)
-                continue
 
-            logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
-
+            # 2. Keyword Search
+            keyword_rows = []
             try:
-                rows = run_vector_query(
+                keyword_rows = run_keyword_query(
                     self.context,
-                    self.index_name,
-                    embedding,
+                    query,
                     input_data.results_per_query,
-                    filters,
-                    include_evidence=False,
+                    index_name="message_fulltext",
                 )
-                logger.info("Query %d returned %d raw results from index %s", query_idx, len(rows), self.index_name)
-                total_raw_results += len(rows)
-                queries_processed += 1
+                logger.info("Query %d keyword search returned %d results", query_idx, len(keyword_rows))
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Query %d failed: %s", query_idx, exc)
+                logger.warning("Query %d keyword search failed: %s", query_idx, exc)
+
+            # Skip this query if both searches failed
+            if not vector_rows and not keyword_rows:
+                logger.warning("Query %d: Both vector and keyword search failed or returned no results", query_idx)
                 continue
+
+            queries_processed += 1
+            total_raw_results += len(vector_rows) + len(keyword_rows)
+
+            # --- Process results from both sources ---
+            # Vector results use query_idx, keyword results use query_idx + KEYWORD_QUERY_OFFSET
+            # This treats them as separate "voters" in the RRF system
+
+            search_batches = [
+                (vector_rows, query_idx, "vector"),
+                (keyword_rows, query_idx + KEYWORD_QUERY_OFFSET, "keyword"),
+            ]
 
             filtered_by_threshold = 0
             filtered_by_time = 0
@@ -284,112 +316,109 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             updated_existing = 0
             filtered_by_content = 0
 
-            for rank, row in enumerate(rows, start=1):
-                node = row.get("node")
-                score = float(row.get("score", 0.0))
+            for rows, effective_query_idx, source_type in search_batches:
+                for rank, row in enumerate(rows, start=1):
+                    node = row.get("node")
+                    score = float(row.get("score", 0.0))
 
-                # Apply similarity threshold
-                if score < input_data.similarity_threshold:
-                    filtered_by_threshold += 1
-                    logger.debug(
-                        "Query %d: Filtered result with score %.3f (below threshold %.2f)",
-                        query_idx,
-                        score,
-                        input_data.similarity_threshold,
-                    )
-                    continue
+                    # Apply similarity threshold
+                    if score < input_data.similarity_threshold:
+                        filtered_by_threshold += 1
+                        logger.debug(
+                            "Query %d (%s): Filtered result with score %.3f (below threshold %.2f)",
+                            query_idx,
+                            source_type,
+                            score,
+                            input_data.similarity_threshold,
+                        )
+                        continue
 
-                if not node:
-                    missing_node += 1
-                    logger.debug("Query %d: Skipping row with missing node", query_idx)
-                    continue
+                    if not node:
+                        missing_node += 1
+                        logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
+                        continue
 
-                properties = dict(node)
-                timestamp_str = properties.get("timestamp")
-                timestamp_dt = _parse_timestamp(timestamp_str)
+                    properties = dict(node)
+                    timestamp_str = properties.get("timestamp")
+                    timestamp_dt = _parse_timestamp(timestamp_str)
 
-                normalized_content = (properties.get("clean_content") or properties.get("content") or "").strip().lower()
-                if normalized_content in BLACKLISTED_CONTENT:
-                    filtered_by_content += 1
-                    logger.debug(
-                        "Query %d: Skipped blacklisted content '%s' for message_id=%s",
-                        query_idx,
-                        normalized_content,
-                        properties.get("message_id"),
-                    )
-                    continue
+                    normalized_content = (properties.get("clean_content") or properties.get("content") or "").strip().lower()
+                    if normalized_content in BLACKLISTED_CONTENT:
+                        filtered_by_content += 1
+                        logger.debug(
+                            "Query %d (%s): Skipped blacklisted content '%s' for message_id=%s",
+                            query_idx,
+                            source_type,
+                            normalized_content,
+                            properties.get("message_id"),
+                        )
+                        continue
 
-                # Apply time range filters
-                if start_dt and (timestamp_dt is None or timestamp_dt < start_dt):
-                    filtered_by_time += 1
-                    logger.debug(
-                        "Query %d: Filtered message before start time: %s < %s",
-                        query_idx,
-                        timestamp_dt,
-                        start_dt,
-                    )
-                    continue
-                if end_dt and (timestamp_dt is None or timestamp_dt > end_dt):
-                    filtered_by_time += 1
-                    logger.debug(
-                        "Query %d: Filtered message after end time: %s > %s",
-                        query_idx,
-                        timestamp_dt,
-                        end_dt,
-                    )
-                    continue
+                    # Apply time range filters
+                    if start_dt and (timestamp_dt is None or timestamp_dt < start_dt):
+                        filtered_by_time += 1
+                        logger.debug(
+                            "Query %d (%s): Filtered message before start time: %s < %s",
+                            query_idx,
+                            source_type,
+                            timestamp_dt,
+                            start_dt,
+                        )
+                        continue
+                    if end_dt and (timestamp_dt is None or timestamp_dt > end_dt):
+                        filtered_by_time += 1
+                        logger.debug(
+                            "Query %d (%s): Filtered message after end time: %s > %s",
+                            query_idx,
+                            source_type,
+                            timestamp_dt,
+                            end_dt,
+                        )
+                        continue
 
-                key = str(properties.get("message_id"))
-                occurrence = occurrences.get(key)
+                    key = str(properties.get("message_id"))
+                    occurrence = occurrences.get(key)
 
-                if occurrence is None:
-                    occurrence = MessageOccurrence(properties=properties, best_score=score)
-                    occurrence.add_observation(query_idx, score, rank, properties)
-                    occurrences[key] = occurrence
-                    added_new += 1
-                    logger.debug(
-                        "Query %d: Added new message: message_id=%s, author=%s, score=%.3f, rank=%d",
-                        query_idx,
-                        key,
-                        properties.get("author_name"),
-                        score,
-                        rank,
-                    )
-                else:
-                    occurrence.add_observation(query_idx, score, rank, properties)
-                    updated_existing += 1
-                    logger.debug(
-                        "Query %d: Updated existing message: message_id=%s, author=%s, score=%.3f, rank=%d",
-                        query_idx,
-                        key,
-                        properties.get("author_name"),
-                        score,
-                        rank,
-                    )
+                    if occurrence is None:
+                        occurrence = MessageOccurrence(properties=properties, best_score=score)
+                        occurrence.add_observation(effective_query_idx, score, rank, properties)
+                        occurrences[key] = occurrence
+                        added_new += 1
+                        logger.debug(
+                            "Query %d (%s): Added new message: message_id=%s, author=%s, score=%.3f, rank=%d",
+                            query_idx,
+                            source_type,
+                            key,
+                            properties.get("author_name"),
+                            score,
+                            rank,
+                        )
+                    else:
+                        occurrence.add_observation(effective_query_idx, score, rank, properties)
+                        updated_existing += 1
+                        logger.debug(
+                            "Query %d (%s): Updated existing message: message_id=%s, author=%s, score=%.3f, rank=%d",
+                            query_idx,
+                            source_type,
+                            key,
+                            properties.get("author_name"),
+                            score,
+                            rank,
+                        )
 
             total_filtered_by_threshold += filtered_by_threshold
             total_filtered_by_time += filtered_by_time
             total_missing_node += missing_node
             total_filtered_by_content += filtered_by_content
             logger.info(
-                "Query %d summary: raw=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, filtered_content=%d, added_new=%d, updated_existing=%d",
+                "Query %d summary: vector_results=%d, keyword_results=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, filtered_content=%d, added_new=%d, updated_existing=%d",
                 query_idx,
-                len(rows),
+                len(vector_rows),
+                len(keyword_rows),
                 filtered_by_threshold,
                 filtered_by_time,
                 missing_node,
                 filtered_by_content,
-                added_new,
-                updated_existing,
-            )
-
-            logger.info(
-                "Query %d summary: raw=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, added_new=%d, updated_existing=%d",
-                query_idx,
-                len(rows),
-                filtered_by_threshold,
-                filtered_by_time,
-                missing_node,
                 added_new,
                 updated_existing,
             )
