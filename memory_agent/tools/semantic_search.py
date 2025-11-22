@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from ..embeddings import EmbeddingProvider
 from ..models import RetrievedFact
 from .base import ToolBase, ToolContext, ToolError
-from .utils import run_vector_query
+from .utils import run_keyword_query, run_vector_query
 
 # Configure logger with handler to ensure logs are visible
 logger = logging.getLogger(__name__)
@@ -27,6 +27,9 @@ DEFAULT_VECTOR_INDEX = "fact_embeddings"
 RRF_K = 60
 DEFAULT_FUSION_METHOD: Literal["rrf", "score_sum", "score_max"] = "rrf"
 DEFAULT_MULTI_QUERY_BOOST = 0.0
+
+# Hybrid search: offset for keyword query indices to treat them as separate "voters" in RRF
+KEYWORD_QUERY_OFFSET = 1000
 
 
 @dataclass
@@ -247,119 +250,149 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         for query_idx, query in enumerate(input_data.queries, 1):
             logger.info("Processing query %d/%d: %r", query_idx, len(input_data.queries), query)
 
-            # Generate embedding for this query
+            # --- HYBRID SEARCH: Execute both vector and keyword searches ---
+
+            # 1. Vector Search
+            vector_rows = []
             embedding = self.embeddings.embed_single(query)
-            if not embedding:
+            if embedding:
+                logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
+                try:
+                    vector_rows = run_vector_query(
+                        self.context,
+                        self.index_name,
+                        embedding,
+                        input_data.limit,
+                        None,
+                    )
+                    logger.info("Query %d vector search returned %d results", query_idx, len(vector_rows))
+                except ToolError as exc:
+                    logger.warning("Query %d vector search failed: %s", query_idx, exc)
+            else:
                 logger.warning("Failed to generate embedding for query %d: %r", query_idx, query)
-                continue
 
-            logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
-
-            # Execute vector query
+            # 2. Keyword Search
+            keyword_rows = []
             try:
-                rows = run_vector_query(
+                keyword_rows = run_keyword_query(
                     self.context,
-                    self.index_name,
-                    embedding,
+                    query,
                     input_data.limit,
-                    None,
                 )
-                logger.info("Query %d returned %d raw results from index %s", query_idx, len(rows), self.index_name)
-                total_raw_results += len(rows)
-                queries_processed += 1
+                logger.info("Query %d keyword search returned %d results", query_idx, len(keyword_rows))
             except ToolError as exc:
-                logger.warning("Query %d failed: %s", query_idx, exc)
+                logger.warning("Query %d keyword search failed: %s", query_idx, exc)
+
+            # Skip this query if both searches failed
+            if not vector_rows and not keyword_rows:
+                logger.warning("Query %d: Both vector and keyword search failed or returned no results", query_idx)
                 continue
 
-            # Process results from this query
+            queries_processed += 1
+            total_raw_results += len(vector_rows) + len(keyword_rows)
+
+            # --- Process results from both sources ---
+            # Vector results use query_idx, keyword results use query_idx + KEYWORD_QUERY_OFFSET
+            # This treats them as separate "voters" in the RRF system
+
+            search_batches = [
+                (vector_rows, query_idx, "vector"),
+                (keyword_rows, query_idx + KEYWORD_QUERY_OFFSET, "keyword"),
+            ]
+
             filtered_by_threshold = 0
             missing_node = 0
             added_new = 0
             updated_existing = 0
 
-            for rank, row in enumerate(rows, start=1):
-                node = row.get("node")
-                score = row.get("score", 0.0)
-                evidence_with_content = row.get("evidence_with_content", [])
+            for rows, effective_query_idx, source_type in search_batches:
+                for rank, row in enumerate(rows, start=1):
+                    node = row.get("node")
+                    score = row.get("score", 0.0)
+                    evidence_with_content = row.get("evidence_with_content", [])
 
-                # Apply similarity threshold
-                if input_data.similarity_threshold and score < input_data.similarity_threshold:
-                    filtered_by_threshold += 1
-                    logger.debug(
-                        "Query %d: Filtered result with score %.3f (below threshold %.2f)",
-                        query_idx,
-                        score,
-                        input_data.similarity_threshold,
-                    )
-                    continue
+                    # Apply similarity threshold
+                    if input_data.similarity_threshold and score < input_data.similarity_threshold:
+                        filtered_by_threshold += 1
+                        logger.debug(
+                            "Query %d (%s): Filtered result with score %.3f (below threshold %.2f)",
+                            query_idx,
+                            source_type,
+                            score,
+                            input_data.similarity_threshold,
+                        )
+                        continue
 
-                if not node:
-                    missing_node += 1
-                    logger.debug("Query %d: Skipping row with missing node", query_idx)
-                    continue
+                    if not node:
+                        missing_node += 1
+                        logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
+                        continue
 
-                # Parse node properties
-                properties = dict(node)
+                    # Parse node properties
+                    properties = dict(node)
 
-                # Create deduplication key
-                person_id = properties.get("person_id", "")
-                fact_type = properties.get("fact_type", "")
-                fact_object = properties.get("fact_object")
+                    # Create deduplication key
+                    person_id = properties.get("person_id", "")
+                    fact_type = properties.get("fact_type", "")
+                    fact_object = properties.get("fact_object")
 
-                # Extract relationship_type from attributes for proper deduplication
-                attributes_raw = properties.get("attributes")
-                relationship_type = None
-                if isinstance(attributes_raw, str):
-                    try:
-                        import json
-                        attributes = json.loads(attributes_raw)
-                        relationship_type = str(attributes.get("relationship_type")) if attributes.get("relationship_type") else None
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(attributes_raw, dict):
-                    relationship_type = str(attributes_raw.get("relationship_type")) if attributes_raw.get("relationship_type") else None
+                    # Extract relationship_type from attributes for proper deduplication
+                    attributes_raw = properties.get("attributes")
+                    relationship_type = None
+                    if isinstance(attributes_raw, str):
+                        try:
+                            import json
+                            attributes = json.loads(attributes_raw)
+                            relationship_type = str(attributes.get("relationship_type")) if attributes.get("relationship_type") else None
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(attributes_raw, dict):
+                        relationship_type = str(attributes_raw.get("relationship_type")) if attributes_raw.get("relationship_type") else None
 
-                dedup_key = (person_id, fact_type, fact_object, relationship_type)
+                    dedup_key = (person_id, fact_type, fact_object, relationship_type)
 
-                # Use evidence_with_content if available, fallback to evidence IDs
-                evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []
+                    # Use evidence_with_content if available, fallback to evidence IDs
+                    evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []
 
-                # Track or update occurrence
-                occurrence = occurrences.get(dedup_key)
-                if occurrence is None:
-                    occurrence = FactOccurrence(properties=properties, best_score=score, evidence=evidence)
-                    occurrence.add_observation(query_idx, score, rank, properties, evidence)
-                    occurrences[dedup_key] = occurrence
-                    added_new += 1
-                    logger.debug(
-                        "Query %d: Added new fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
-                        query_idx,
+                    # Track or update occurrence
+                    occurrence = occurrences.get(dedup_key)
+                    if occurrence is None:
+                        occurrence = FactOccurrence(properties=properties, best_score=score, evidence=evidence)
+                        occurrence.add_observation(effective_query_idx, score, rank, properties, evidence)
+                        occurrences[dedup_key] = occurrence
+                        added_new += 1
+                        logger.debug(
+                            "Query %d (%s): Added new fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
+                            query_idx,
+                            source_type,
+                            properties.get("person_name", person_id),
+                            fact_type,
+                            fact_object,
+                            score,
+                            rank,
+                        )
+                    else:
+                        occurrence.add_observation(effective_query_idx, score, rank, properties, evidence)
+                        updated_existing += 1
+                        logger.debug(
+                            "Query %d (%s): Updated existing fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
+                            query_idx,
+                            source_type,
                         properties.get("person_name", person_id),
                         fact_type,
                         fact_object,
                         score,
                         rank,
-                    )
-                else:
-                    occurrence.add_observation(query_idx, score, rank, properties, evidence)
-                    updated_existing += 1
-                    logger.debug(
-                        "Query %d: Updated existing fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
-                        query_idx,
-                        properties.get("person_name", person_id),
-                        fact_type,
-                        fact_object,
-                        score,
-                        rank,
-                    )
+                        )
 
             total_filtered_by_threshold += filtered_by_threshold
             total_missing_node += missing_node
 
             logger.info(
-                "Query %d summary: raw=%d, filtered=%d, missing_node=%d, added_new=%d, updated_existing=%d",
+                "Query %d summary: vector_results=%d, keyword_results=%d, filtered=%d, missing_node=%d, added_new=%d, updated_existing=%d",
                 query_idx,
-                len(rows),
+                len(vector_rows),
+                len(keyword_rows),
                 filtered_by_threshold,
                 missing_node,
                 added_new,

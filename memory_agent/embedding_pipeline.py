@@ -39,8 +39,9 @@ def _session_kwargs(database: str | None) -> dict[str, str]:
     return {"database": database} if database else {}
 
 
-def ensure_vector_index(session: Session, index_name: str = VECTOR_INDEX_NAME) -> None:
-    """Create the vector index used for semantic search if it is absent."""
+def ensure_indices(session: Session, index_name: str = VECTOR_INDEX_NAME) -> None:
+    """Create both vector and fulltext indices for hybrid search if absent."""
+    # Vector index for semantic search
     logger.info("Ensuring Neo4j vector index %s exists", index_name)
     session.run(
         f"""
@@ -53,6 +54,16 @@ def ensure_vector_index(session: Session, index_name: str = VECTOR_INDEX_NAME) -
                 `vector.similarity_function`: 'cosine'
             }}
         }}
+        """
+    )
+
+    # Fulltext index for keyword/exact matching
+    logger.info("Ensuring Neo4j fulltext index fact_fulltext exists")
+    session.run(
+        """
+        CREATE FULLTEXT INDEX fact_fulltext IF NOT EXISTS
+        FOR (f:FactEmbedding)
+        ON EACH [f.text, f.person_name, f.fact_object]
         """
     )
 
@@ -215,7 +226,7 @@ def run_embedding_pipeline(
     """High-level pipeline orchestration."""
     summary: dict[str, Any] = {}
     with driver.session(**_session_kwargs(database)) as session:
-        ensure_vector_index(session)
+        ensure_indices(session)
         facts = fetch_graph_facts(session)
     if not facts:
         logger.info("No facts found; skipping embedding generation")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -96,3 +97,62 @@ def run_vector_query(
         if match:
             filtered_rows.append(row)
     return filtered_rows
+
+
+def run_keyword_query(
+    context: ToolContext,
+    query_text: str,
+    limit: int,
+    *,
+    index_name: str = "fact_fulltext",
+) -> list[dict[str, Any]]:
+    """Execute a fulltext keyword search using Lucene syntax with fuzzy matching.
+
+    Args:
+        context: Tool execution context with Neo4j session
+        query_text: The search query string
+        limit: Maximum number of results to return
+        index_name: Name of the fulltext index (default: fact_fulltext)
+
+    Returns:
+        List of dictionaries with 'node', 'score', and 'evidence_with_content' keys,
+        matching the format returned by run_vector_query.
+    """
+    # Sanitize query for Lucene: keep alphanumeric, spaces, hyphens, underscores
+    safe_text = re.sub(r"[^a-zA-Z0-9\s\-_]", "", query_text).strip()
+
+    if not safe_text:
+        logger.warning("Keyword query sanitized to empty string, returning no results")
+        return []
+
+    # Construct Lucene query: exact terms OR fuzzy terms (~ for edit distance)
+    # For multi-word queries, apply fuzzy matching to each term
+    terms = safe_text.split()
+    lucene_parts = []
+    for term in terms:
+        # Add both exact and fuzzy match: "Python OR Python~"
+        lucene_parts.append(f"{term} OR {term}~")
+
+    lucene_query = " ".join(lucene_parts)
+
+    query = """
+    CALL db.index.fulltext.queryNodes($index_name, $lucene_query)
+    YIELD node, score
+    WITH node, score
+    LIMIT $limit
+    WITH node, score, node.evidence AS evidence_ids
+    OPTIONAL MATCH (author:Person)-[:SENT]->(msg:Message)
+    WHERE msg.id IN evidence_ids
+    WITH node, score,
+         COLLECT({source_id: msg.id, snippet: msg.content, created_at: msg.timestamp, author: coalesce(author.realName, author.name)}) AS evidence_with_content
+    RETURN node, score, evidence_with_content
+    """
+
+    parameters = {
+        "index_name": index_name,
+        "lucene_query": lucene_query,
+        "limit": limit,
+    }
+
+    logger.debug("Keyword query: %r (Lucene: %r)", query_text, lucene_query)
+    return run_read_query(context, query, parameters)
