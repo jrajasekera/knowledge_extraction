@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Sequence
 
 from neo4j import Driver, Session
+from tqdm import tqdm
 
 from .embedding_utils import chunk_iterable
 from .embeddings import EmbeddingProvider
@@ -317,47 +318,57 @@ def generate_message_embeddings(
         # Sequential processing (original behavior)
         logger.info("Processing %d batches sequentially", len(batches))
         skipped = 0
-        for batch in batches:
-            results = _embed_message_batch(
-                batch,
-                provider.model_name,
-                provider.device,
-                provider.cache_dir,
-            )
-            skipped += len(batch) - len(results)
-            for message, clean_text, embedding in results:
-                rows.append(_build_row(message, clean_text, embedding))
-        return rows, skipped
-    else:
-        # Parallel processing with multiple workers
-        logger.info("Processing %d batches with %d workers", len(batches), workers)
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            # Submit all batches
-            futures = {
-                executor.submit(
-                    _embed_message_batch,
+        with tqdm(
+            total=total_messages,
+            desc="Embedding messages",
+            unit="msg",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        ) as pbar:
+            for batch in batches:
+                results = _embed_message_batch(
                     batch,
                     provider.model_name,
                     provider.device,
                     provider.cache_dir,
-                ): batch_idx
-                for batch_idx, batch in enumerate(batches)
-            }
+                )
+                skipped += len(batch) - len(results)
+                for message, clean_text, embedding in results:
+                    rows.append(_build_row(message, clean_text, embedding))
+                pbar.update(len(batch))
+        return rows, skipped
+    else:
+        # Parallel processing with multiple workers
+        logger.info("Processing %d batches with %d workers", len(batches), workers)
+        with tqdm(
+            total=total_messages,
+            desc="Embedding messages",
+            unit="msg",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        ) as pbar:
+            with ProcessPoolExecutor(max_workers=workers) as executor:
+                # Submit all batches
+                futures = {
+                    executor.submit(
+                        _embed_message_batch,
+                        batch,
+                        provider.model_name,
+                        provider.device,
+                        provider.cache_dir,
+                    ): (batch_idx, len(batch))
+                    for batch_idx, batch in enumerate(batches)
+                }
 
-            # Collect results as they complete
-            completed = 0
-            for future in as_completed(futures):
-                batch_idx = futures[future]
-                try:
-                    results = future.result()
-                    for message, clean_text, embedding in results:
-                        rows.append(_build_row(message, clean_text, embedding))
-                    completed += 1
-                    if completed % 10 == 0:
-                        logger.info("Completed %d/%d batches", completed, len(batches))
-                except Exception as exc:
-                    logger.error("Batch %d failed with error: %s", batch_idx, exc)
-                    raise
+                # Collect results as they complete
+                for future in as_completed(futures):
+                    batch_idx, batch_size = futures[future]
+                    try:
+                        results = future.result()
+                        for message, clean_text, embedding in results:
+                            rows.append(_build_row(message, clean_text, embedding))
+                        pbar.update(batch_size)
+                    except Exception as exc:
+                        logger.error("Batch %d failed with error: %s", batch_idx, exc)
+                        raise
 
         skipped = total_messages - len(rows)
         return rows, skipped

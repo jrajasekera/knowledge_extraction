@@ -23,6 +23,7 @@ dependencies = [
     "prometheus-client>=0.23.1",
     "langchain-anthropic>=0.3.22",
     "langsmith>=0.4.34",
+    "tqdm>=4.67.1",
 ]
 
 [tool.uv.sources]
