@@ -205,7 +205,7 @@ sqlite3 ./discord.db "SELECT query, status_code, duration_ms FROM memory_agent_r
 - `LLAMA_TIMEOUT`: Request timeout in seconds (default: `1200`)
 
 ### Embeddings (for semantic search)
-- `EMBEDDING_MODEL`: Model name (default: `google/embeddinggemma-300m`)
+- `EMBEDDING_MODEL`: Model name (default: `google/embeddinggemma-300m`, configurable in `constants.py`)
 - `EMBEDDING_DEVICE`: Device (default: `cpu`)
 - `EMBEDDING_CACHE_DIR`: Optional cache directory
 
@@ -308,7 +308,7 @@ GROUP BY status_code;
 
 - Scripts use `snake_case.py` (e.g., `import_discord_json.py`)
 - Modules under `ie/` and `memory_agent/` use `snake_case.py`
-- Utility modules: `db_utils.py` (SQLite connection helpers with WAL mode support)
+- Utility modules: `db_utils.py` (SQLite connection helpers with WAL mode support), `constants.py` (shared constants including default embedding model)
 - Data files: `discord.db` (SQLite), `schema.sql` (schema definition), `ingest.cql` (Neo4j setup)
 - Exports directory: `data/` or `./exports` (not committed to git)
 - Test fixtures: `tests/fixtures/`

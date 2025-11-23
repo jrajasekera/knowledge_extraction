@@ -12,6 +12,7 @@ from typing import Iterable, Mapping, Sequence
 
 from neo4j import GraphDatabase
 
+from constants import DEFAULT_EMBEDDING_MODEL
 from db_utils import get_sqlite_connection
 from facts_to_graph import materialize_facts
 from ie.client import LlamaServerConfig
@@ -42,7 +43,7 @@ class DeduplicationConfig:
     minhash_threshold: float = 0.7
     minhash_num_perm: int = 128
     minhash_ngram_size: int = 3
-    embedding_model: str = "google/embeddinggemma-300m"
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL
     embedding_threshold: float = 0.85
     embedding_batch_size: int = 32
     embedding_device: str | None = None

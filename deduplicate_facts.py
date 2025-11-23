@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
+from constants import DEFAULT_EMBEDDING_MODEL
 from deduplicate.core import DeduplicationConfig, DeduplicationOrchestrator
 from ie.client import LlamaServerConfig
 
 
 def parse_args() -> argparse.Namespace:
     default_llm = LlamaServerConfig()
+    default_embedding_model = os.getenv("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
     parser = argparse.ArgumentParser(description="Deduplicate IE facts in SQLite.")
     parser.add_argument("--sqlite", type=Path, default=Path("./discord.db"), help="Path to SQLite database.")
     parser.add_argument("--neo4j-uri", default="bolt://localhost:7687", help="Neo4j bolt URI.")
@@ -21,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--minhash-threshold", type=float, default=0.80, help="Jaccard threshold for MinHash LSH.")
     parser.add_argument("--minhash-num-perm", type=int, default=128, help="Number of MinHash permutations.")
     parser.add_argument("--minhash-ngram-size", type=int, default=3, help="Character n-gram size for MinHash tokens.")
-    parser.add_argument("--embedding-model", default="google/embeddinggemma-300m", help="SentenceTransformer embedding model name.")
+    parser.add_argument("--embedding-model", default=default_embedding_model, help="SentenceTransformer embedding model name.")
     parser.add_argument("--embedding-threshold", type=float, default=0.95, help="Cosine similarity threshold for embeddings.")
     parser.add_argument("--embedding-batch-size", type=int, default=32, help="Embedding encoder batch size.")
     parser.add_argument("--embedding-device", help="Force embedding model device (e.g. cuda or cpu).", default="cpu")

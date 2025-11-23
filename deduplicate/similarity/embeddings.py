@@ -7,6 +7,7 @@ from typing import Dict, Mapping, Sequence
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+from constants import DEFAULT_EMBEDDING_MODEL
 from ie.types import FactType
 
 from ..models import FactRecord, SimilarityPair
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class EmbeddingConfig:
-    model_name: str = "google/embeddinggemma-300m"
+    model_name: str = DEFAULT_EMBEDDING_MODEL
     threshold: float = 0.85
     batch_size: int = 32
     device: str | None = None

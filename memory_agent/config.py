@@ -9,6 +9,8 @@ from typing import Literal
 
 from dotenv import load_dotenv
 
+from constants import DEFAULT_EMBEDDING_MODEL
+
 
 # Load environment variables from a .env file if present.
 load_dotenv()
@@ -54,7 +56,7 @@ class LLMConfig:
 class EmbeddingConfig:
     """Configuration for the semantic search embedding model."""
 
-    model: str = "google/embeddinggemma-300m"
+    model: str = DEFAULT_EMBEDDING_MODEL
     device: str = "cpu"
     cache_dir: Path | None = None
 
@@ -63,7 +65,7 @@ class EmbeddingConfig:
 class MessageEmbeddingConfig:
     """Configuration for the message embedding maintenance job."""
 
-    model: str = "google/embeddinggemma-300m"
+    model: str = DEFAULT_EMBEDDING_MODEL
     device: str = "cpu"
     cache_dir: Path | None = None
     batch_size: int = 128
@@ -168,7 +170,7 @@ class Settings:
             timeout=timeout,
         )
 
-        embedding_model = cls._str_env("EMBEDDING_MODEL") or "google/embeddinggemma-300m"
+        embedding_model = cls._str_env("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
         embedding_device = cls._str_env("EMBEDDING_DEVICE") or "cpu"
         embedding_cache = cls._str_env("EMBEDDING_CACHE_DIR")
         embeddings = EmbeddingConfig(
