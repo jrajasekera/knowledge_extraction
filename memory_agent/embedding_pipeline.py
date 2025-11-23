@@ -10,6 +10,7 @@ from typing import Any, Iterable, Sequence
 from neo4j import Driver, Session
 from tqdm import tqdm
 
+from constants import EMBEDDING_VECTOR_DIMENSIONS
 from .embedding_utils import chunk_iterable, sanitize_array, sanitize_evidence, serialize_attributes
 from .embeddings import EmbeddingProvider
 from .fact_formatter import format_fact_for_embedding_text
@@ -18,7 +19,7 @@ from .fact_formatter import format_fact_for_embedding_text
 logger = logging.getLogger(__name__)
 
 VECTOR_INDEX_NAME = "fact_embeddings"
-VECTOR_DIMENSIONS = 768
+VECTOR_DIMENSIONS = EMBEDDING_VECTOR_DIMENSIONS
 
 
 @dataclass(slots=True)

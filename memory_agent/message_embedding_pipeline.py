@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from neo4j import Driver, Session
 from tqdm import tqdm
 
+from constants import EMBEDDING_VECTOR_DIMENSIONS
 from .embedding_utils import chunk_iterable
 from .embeddings import EmbeddingProvider
 from .message_formatter import format_message_for_embedding_text
@@ -20,7 +21,7 @@ from .message_formatter import format_message_for_embedding_text
 logger = logging.getLogger(__name__)
 
 VECTOR_INDEX_NAME = "message_embeddings"
-VECTOR_DIMENSIONS = 768
+VECTOR_DIMENSIONS = EMBEDDING_VECTOR_DIMENSIONS
 DEFAULT_BATCH_SIZE = 128
 
 

@@ -205,7 +205,7 @@ sqlite3 ./discord.db "SELECT query, status_code, duration_ms FROM memory_agent_r
 - `LLAMA_TIMEOUT`: Request timeout in seconds (default: `1200`)
 
 ### Embeddings (for semantic search)
-- `EMBEDDING_MODEL`: Model name (default: `google/embeddinggemma-300m`, configurable in `constants.py`)
+- `EMBEDDING_MODEL`: Model name (default: `BAAI/bge-large-en-v1.5`, configurable in `constants.py`)
 - `EMBEDDING_DEVICE`: Device (default: `cpu`)
 - `EMBEDDING_CACHE_DIR`: Optional cache directory
 
