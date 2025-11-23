@@ -28,6 +28,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Populate Neo4j fact embeddings for semantic search.")
     parser.add_argument("--settings-from-env", action="store_true", default=True, help=argparse.SUPPRESS)
     parser.add_argument("--cleanup", action="store_true", default=False, help="Remove embeddings for facts that no longer exist.")
+    parser.add_argument("--batch-size", type=int, default=64, help="Number of facts per batch (default: 64)")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers for CPU (default: 1, recommended: 2-4)")
     return parser.parse_args()
 
 
@@ -57,6 +59,8 @@ def main() -> None:
             provider,
             database=settings.neo4j.database,
             cleanup=args.cleanup,
+            batch_size=args.batch_size,
+            workers=args.workers,
         )
         logger.info("Embedding pipeline summary: %s", json.dumps(summary))
     finally:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
@@ -121,10 +122,33 @@ def fetch_graph_facts(session: Session) -> list[GraphFact]:
     return facts
 
 
-def chunk_iterable(values: Sequence[GraphFact], size: int) -> Iterator[Sequence[GraphFact]]:
-    """Yield successive chunks from the sequence."""
-    for start in range(0, len(values), size):
-        yield values[start : start + size]
+def _embed_fact_batch(
+    batch: Sequence[GraphFact],
+    model_name: str,
+    device: str,
+    cache_dir: str | None,
+) -> list[tuple[GraphFact, str, list[float]]]:
+    """Worker function to embed a single batch of facts (runs in subprocess)."""
+    # Each worker creates its own provider instance
+    provider = EmbeddingProvider(
+        model_name=model_name,
+        device=device,
+        cache_dir=cache_dir,
+    )
+
+    texts = [
+        format_fact_for_embedding_text(
+            person_name=fact.person_name,
+            fact_type=fact.fact_type,
+            fact_object=fact.fact_object,
+            attributes=fact.attributes,
+            evidence_text=fact.evidence_text,
+        )
+        for fact in batch
+    ]
+
+    embeddings = provider.embed(texts)
+    return list(zip(batch, texts, embeddings, strict=False))
 
 
 def generate_embeddings(
@@ -132,37 +156,90 @@ def generate_embeddings(
     provider: EmbeddingProvider,
     *,
     batch_size: int = 64,
+    workers: int = 1,
 ) -> list[dict[str, Any]]:
-    """Create embedding payloads ready to be persisted in Neo4j."""
+    """Create embedding payloads ready to be persisted in Neo4j.
+
+    Args:
+        facts: Sequence of facts to embed
+        provider: Embedding provider (config will be extracted for workers)
+        batch_size: Number of facts per batch
+        workers: Number of parallel workers (1 = sequential, >1 = parallel)
+    """
     rows: list[dict[str, Any]] = []
-    for chunk in chunk_iterable(facts, batch_size):
-        texts = [
-            format_fact_for_embedding_text(
-                person_name=fact.person_name,
-                fact_type=fact.fact_type,
-                fact_object=fact.fact_object,
-                attributes=fact.attributes,
-                evidence_text=fact.evidence_text,
+    batches = list(chunk_iterable(facts, batch_size))
+
+    if workers <= 1:
+        # Sequential processing (original behavior)
+        logger.info("Processing %d batches sequentially", len(batches))
+        for batch in batches:
+            results = _embed_fact_batch(
+                batch,
+                provider.model_name,
+                provider.device,
+                provider.cache_dir,
             )
-            for fact in chunk
-        ]
-        embeddings = provider.embed(texts)
-        for fact, embedding, text in zip(chunk, embeddings, texts, strict=False):
-            rows.append(
-                {
-                    "fact_id": fact.fact_id,
-                    "person_id": fact.person_id,
-                    "person_name": fact.person_name,
-                    "fact_type": fact.fact_type,
-                    "fact_object": fact.fact_object,
-                    "attributes_json": serialize_attributes(fact.attributes),
-                    "confidence": fact.confidence,
-                    "evidence": sanitize_evidence(fact.evidence),
-                    "target_labels": sanitize_array(fact.target_labels),
-                    "text": text,
-                    "embedding": embedding,
-                }
-            )
+            for fact, text, embedding in results:
+                rows.append(
+                    {
+                        "fact_id": fact.fact_id,
+                        "person_id": fact.person_id,
+                        "person_name": fact.person_name,
+                        "fact_type": fact.fact_type,
+                        "fact_object": fact.fact_object,
+                        "attributes_json": serialize_attributes(fact.attributes),
+                        "confidence": fact.confidence,
+                        "evidence": sanitize_evidence(fact.evidence),
+                        "target_labels": sanitize_array(fact.target_labels),
+                        "text": text,
+                        "embedding": embedding,
+                    }
+                )
+    else:
+        # Parallel processing with multiple workers
+        logger.info("Processing %d batches with %d workers", len(batches), workers)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            # Submit all batches
+            futures = {
+                executor.submit(
+                    _embed_fact_batch,
+                    batch,
+                    provider.model_name,
+                    provider.device,
+                    provider.cache_dir,
+                ): batch_idx
+                for batch_idx, batch in enumerate(batches)
+            }
+
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(futures):
+                batch_idx = futures[future]
+                try:
+                    results = future.result()
+                    for fact, text, embedding in results:
+                        rows.append(
+                            {
+                                "fact_id": fact.fact_id,
+                                "person_id": fact.person_id,
+                                "person_name": fact.person_name,
+                                "fact_type": fact.fact_type,
+                                "fact_object": fact.fact_object,
+                                "attributes_json": serialize_attributes(fact.attributes),
+                                "confidence": fact.confidence,
+                                "evidence": sanitize_evidence(fact.evidence),
+                                "target_labels": sanitize_array(fact.target_labels),
+                                "text": text,
+                                "embedding": embedding,
+                            }
+                        )
+                    completed += 1
+                    if completed % 10 == 0:
+                        logger.info("Completed %d/%d batches", completed, len(batches))
+                except Exception as exc:
+                    logger.error("Batch %d failed with error: %s", batch_idx, exc)
+                    raise
+
     logger.info("Generated embeddings for %d facts", len(rows))
     return rows
 
@@ -222,8 +299,19 @@ def run_embedding_pipeline(
     *,
     database: str | None = None,
     cleanup: bool = True,
+    batch_size: int = 64,
+    workers: int = 1,
 ) -> dict[str, Any]:
-    """High-level pipeline orchestration."""
+    """High-level pipeline orchestration.
+
+    Args:
+        driver: Neo4j driver
+        provider: Embedding provider
+        database: Optional Neo4j database name
+        cleanup: Whether to remove orphan embeddings
+        batch_size: Number of facts per batch
+        workers: Number of parallel workers (1 = sequential)
+    """
     summary: dict[str, Any] = {}
     with driver.session(**_session_kwargs(database)) as session:
         ensure_indices(session)
@@ -232,7 +320,7 @@ def run_embedding_pipeline(
         logger.info("No facts found; skipping embedding generation")
         summary["facts_processed"] = 0
         return summary
-    rows = generate_embeddings(facts, provider)
+    rows = generate_embeddings(facts, provider, batch_size=batch_size, workers=workers)
     with driver.session(**_session_kwargs(database)) as session:
         upsert_embeddings(session, rows, embedding_model=provider.model_name)
         if cleanup:

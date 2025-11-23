@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cleanup", action="store_true", default=False, help="Delete embeddings for messages that no longer exist.")
     parser.add_argument("--dry-run", action="store_true", default=False, help="Compute embeddings without writing them back to Neo4j.")
     parser.add_argument("--batch-size", type=int, default=None, help="Override embedding batch size (default from settings).")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers for CPU (default: 1, recommended: 2-4)")
     return parser.parse_args()
 
 
@@ -67,6 +68,7 @@ def main() -> None:
             cleanup=args.cleanup,
             dry_run=args.dry_run,
             batch_size=batch_size,
+            workers=args.workers,
         )
         logger.info("Message embedding pipeline summary: %s", json.dumps(summary))
     finally:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Sequence
@@ -221,6 +222,48 @@ def fetch_graph_messages(session: Session) -> list[GraphMessage]:
     return messages
 
 
+def _embed_message_batch(
+    batch: Sequence[GraphMessage],
+    model_name: str,
+    device: str,
+    cache_dir: str | None,
+) -> list[tuple[GraphMessage, str, list[float]]]:
+    """Worker function to embed a single batch of messages (runs in subprocess)."""
+    # Each worker creates its own provider instance
+    provider = EmbeddingProvider(
+        model_name=model_name,
+        device=device,
+        cache_dir=cache_dir,
+    )
+
+    results: list[tuple[GraphMessage, str, list[float]]] = []
+    texts = []
+    valid_messages = []
+
+    for message in batch:
+        clean_text = format_message_for_embedding_text(
+            author_name=message.author_name,
+            content=message.content,
+            channel_name=message.channel_name,
+            channel_topic=message.channel_topic,
+            guild_name=message.guild_name,
+            mentions=message.mentions,
+            channel_id=message.channel_id,
+        )
+        if clean_text:
+            texts.append(clean_text)
+            valid_messages.append((message, clean_text))
+
+    if not texts:
+        return []
+
+    embeddings = provider.embed(texts)
+    for (message, clean_text), embedding in zip(valid_messages, embeddings, strict=False):
+        results.append((message, clean_text, embedding))
+
+    return results
+
+
 def _build_row(message: GraphMessage, clean_text: str, embedding: list[float]) -> dict[str, Any]:
     attachments_json = _json_dumps(message.attachments)
     reactions_json = _json_dumps(message.reactions)
@@ -256,34 +299,68 @@ def generate_message_embeddings(
     provider: EmbeddingProvider,
     *,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    workers: int = 1,
 ) -> tuple[list[dict[str, Any]], int]:
-    """Generate embedding payloads and report how many messages were skipped."""
+    """Generate embedding payloads and report how many messages were skipped.
 
+    Args:
+        messages: Sequence of messages to embed
+        provider: Embedding provider (config will be extracted for workers)
+        batch_size: Number of messages per batch
+        workers: Number of parallel workers (1 = sequential, >1 = parallel)
+    """
     rows: list[dict[str, Any]] = []
-    skipped = 0
-    for chunk in chunk_iterable(messages, batch_size):
-        payloads: list[tuple[GraphMessage, str]] = []
-        for message in chunk:
-            clean_text = format_message_for_embedding_text(
-                author_name=message.author_name,
-                content=message.content,
-                channel_name=message.channel_name,
-                channel_topic=message.channel_topic,
-                guild_name=message.guild_name,
-                mentions=message.mentions,
-                channel_id=message.channel_id,
+    batches = list(chunk_iterable(messages, batch_size))
+    total_messages = len(messages)
+
+    if workers <= 1:
+        # Sequential processing (original behavior)
+        logger.info("Processing %d batches sequentially", len(batches))
+        skipped = 0
+        for batch in batches:
+            results = _embed_message_batch(
+                batch,
+                provider.model_name,
+                provider.device,
+                provider.cache_dir,
             )
-            if not clean_text:
-                skipped += 1
-                continue
-            payloads.append((message, clean_text))
-        if not payloads:
-            continue
-        texts = [clean_text for _, clean_text in payloads]
-        embeddings = provider.embed(texts)
-        for (message, clean_text), embedding in zip(payloads, embeddings, strict=False):
-            rows.append(_build_row(message, clean_text, embedding))
-    return rows, skipped
+            skipped += len(batch) - len(results)
+            for message, clean_text, embedding in results:
+                rows.append(_build_row(message, clean_text, embedding))
+        return rows, skipped
+    else:
+        # Parallel processing with multiple workers
+        logger.info("Processing %d batches with %d workers", len(batches), workers)
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            # Submit all batches
+            futures = {
+                executor.submit(
+                    _embed_message_batch,
+                    batch,
+                    provider.model_name,
+                    provider.device,
+                    provider.cache_dir,
+                ): batch_idx
+                for batch_idx, batch in enumerate(batches)
+            }
+
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(futures):
+                batch_idx = futures[future]
+                try:
+                    results = future.result()
+                    for message, clean_text, embedding in results:
+                        rows.append(_build_row(message, clean_text, embedding))
+                    completed += 1
+                    if completed % 10 == 0:
+                        logger.info("Completed %d/%d batches", completed, len(batches))
+                except Exception as exc:
+                    logger.error("Batch %d failed with error: %s", batch_idx, exc)
+                    raise
+
+        skipped = total_messages - len(rows)
+        return rows, skipped
 
 
 def upsert_message_embeddings(
@@ -356,9 +433,19 @@ def run_message_embedding_pipeline(
     cleanup: bool = False,
     dry_run: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    workers: int = 1,
 ) -> dict[str, Any]:
-    """High level orchestration for message embedding generation."""
+    """High level orchestration for message embedding generation.
 
+    Args:
+        driver: Neo4j driver
+        provider: Embedding provider
+        database: Optional Neo4j database name
+        cleanup: Whether to remove orphan embeddings
+        dry_run: Skip database writes
+        batch_size: Number of messages per batch
+        workers: Number of parallel workers (1 = sequential)
+    """
     summary: dict[str, Any] = {
         "messages_scanned": 0,
         "messages_embedded": 0,
@@ -374,7 +461,7 @@ def run_message_embedding_pipeline(
         logger.info("No messages available; skipping embedding generation")
         return summary
 
-    rows, skipped = generate_message_embeddings(messages, provider, batch_size=batch_size)
+    rows, skipped = generate_message_embeddings(messages, provider, batch_size=batch_size, workers=workers)
     summary["skipped_empty"] = skipped
     summary["messages_embedded"] = len(rows)
 

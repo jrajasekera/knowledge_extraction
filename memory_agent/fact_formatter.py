@@ -92,14 +92,12 @@ def format_fact_for_embedding_text(
     if attribute_items:
         result = f"{base}. " + ", ".join(attribute_items)
 
-    # Include evidence messages if available (truncated for embedding efficiency)
+    # Include evidence messages if available
     if evidence_text:
-        # Take up to 5 evidence messages, truncate each to 200 chars
         evidence_snippets = []
-        for msg in list(evidence_text)[:5]:
+        for msg in evidence_text:
             if msg:
-                snippet = msg if len(msg) <= 200 else msg[:197] + "..."
-                evidence_snippets.append(snippet)
+                evidence_snippets.append(msg)
         if evidence_snippets:
             evidence_str = " | ".join(evidence_snippets)
             result = f"{result}. Evidence: {evidence_str}"
