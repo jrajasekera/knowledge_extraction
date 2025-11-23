@@ -247,18 +247,19 @@ class LLMClient:
         """Determine the user's information retrieval goal from the conversation.
 
         Analyzes the conversation (focusing on the last message) to determine what
-        information the user is seeking. Returns a clear, actionable goal for the
-        memory agent, or indicates if no retrieval is needed.
+        information the user is seeking. Always returns a retrieval goal, even if
+        the message doesn't have a direct information need - in that case, generates
+        a goal about gathering contextual information.
 
         Args:
             messages: List of conversation messages
 
         Returns:
-            A clear goal string (e.g., "Find people with Kubernetes experience")
-            or "No retrieval needed" if the conversation doesn't require information lookup
+            A clear goal string (e.g., "Find people with Kubernetes experience" or
+            "Gather contextual information about recent conversation participants")
         """
         if not self.is_available or not messages:
-            return "Collect relevant context."
+            return "Collect relevant context about conversation participants and topics."
 
         # Separate last message from conversation history
         last_message = messages[-1]
@@ -270,7 +271,7 @@ class LLMClient:
         ) if history_messages else "(No previous messages)"
 
         prompt = (
-            "Analyze a Discord conversation to determine if the user needs information retrieval.\n"
+            "Analyze a Discord conversation to determine what information should be retrieved.\n"
             "Focus EXCLUSIVELY on the LAST MESSAGE to understand what the user wants NOW.\n"
             "Use conversation history ONLY for context to understand references.\n\n"
 
@@ -281,29 +282,27 @@ class LLMClient:
             f"```\n{last_message_text}\n```\n\n"
 
             "## Your Task:\n"
-            "Determine if the LAST MESSAGE requires retrieving information about people, their skills, experiences, or activities.\n\n"
+            "Always generate a retrieval goal. Even if the message doesn't explicitly seek information,\n"
+            "create a goal about gathering contextual information that could enrich the conversation.\n\n"
 
-            "## Information-Seeking Indicators:\n"
+            "## Direct Information-Seeking (generate specific goals):\n"
             "- Questions about people: 'Who knows X?', 'Does anyone have Y experience?'\n"
             "- Requests for information: 'Tell me about...', 'I need to find...', 'Looking for...'\n"
             "- Implicit needs: 'We need someone with X skills', 'Anyone familiar with Y?'\n"
             "- Follow-ups referencing prior context: 'What about them?', 'Tell me more'\n\n"
 
-            "## NOT Information-Seeking:\n"
-            "- Casual chat: 'Hey', 'Thanks!', 'Sounds good'\n"
-            "- Rhetorical questions: 'Is it Friday yet?', 'Why is this so hard?'\n"
-            "- Statements of fact: 'I finished the project', 'The meeting is at 3pm'\n"
-            "- Commands/actions: 'Please update the docs', 'Can you review my PR?'\n\n"
+            "## Indirect/Contextual Messages (generate context-gathering goals):\n"
+            "- Casual chat: 'Hey', 'Thanks!', 'Sounds good' → Gather context about the person and recent topics\n"
+            "- Rhetorical questions: 'Is it Friday yet?' → Gather context about work patterns and schedules\n"
+            "- Statements of fact: 'I finished the project' → Gather context about the person's projects and skills\n"
+            "- Commands/actions: 'Please update the docs' → Gather context about documentation contributors\n\n"
 
             "## Output Rules:\n"
-            "If the last message seeks information about people/skills/experiences:\n"
-            "- Write a clear, specific goal for the memory agent (10-30 words)\n"
-            "- Focus on WHAT information to retrieve, not HOW to retrieve it\n"
-            "- Use action verbs: 'Find', 'Identify', 'Locate', 'Determine'\n"
-            "- Be specific about what's being sought (skills, people, experiences, etc.)\n\n"
-
-            "If the last message does NOT seek retrievable information:\n"
-            "- Return exactly: 'No retrieval needed'\n\n"
+            "ALWAYS write a clear retrieval goal (10-30 words):\n"
+            "- For direct information needs: Focus on WHAT specific information to retrieve\n"
+            "- For indirect messages: Focus on gathering contextual information about participants, topics, or activities\n"
+            "- Use action verbs: 'Find', 'Identify', 'Locate', 'Gather', 'Retrieve', 'Collect'\n"
+            "- Be specific about what's being sought (skills, people, experiences, context, etc.)\n\n"
 
             "## Examples:\n"
             "Last: 'Who knows Rust?'\n"
@@ -312,7 +311,7 @@ class LLMClient:
             "Last: 'Does anyone have experience with Kubernetes in production?'\n"
             "Goal: 'Identify people with production Kubernetes deployment experience'\n\n"
 
-            "Last: 'What does he thinks about this?'\n"
+            "Last: 'What does he think about this?'\n"
             "Goal: 'Find out what [resolve person from history] thinks about [resolve topic from history]'\n\n"
 
             "Last: 'Tell me about the AI team members'\n"
@@ -322,10 +321,13 @@ class LLMClient:
             "Goal: 'Retrieve information about [resolve reference from history]'\n\n"
 
             "Last: 'Thanks for the help!'\n"
-            "Goal: 'No retrieval needed'\n\n"
+            "Goal: 'Gather contextual information about recent conversation participants and their expertise'\n\n"
 
             "Last: 'Is it Friday yet?'\n"
-            "Goal: 'No retrieval needed'\n\n"
+            "Goal: 'Collect context about work schedules and weekly patterns discussed by participants'\n\n"
+
+            "Last: 'I just deployed the new feature'\n"
+            "Goal: 'Gather information about the person's deployment experience and related technical skills'\n\n"
 
             "Last: 'What are your favorite quotes by [person]?'\n"
             "Goal: 'Find notable quotes by [person]'\n\n"
