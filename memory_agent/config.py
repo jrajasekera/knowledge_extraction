@@ -78,6 +78,7 @@ class AgentConfig:
     max_iterations: int = 10
     max_facts: int = 30
     tool_timeout_seconds: int = 10
+    tool_max_retries: int = 1
     reasoning_trace_limit: int = 20
 
 
@@ -197,6 +198,7 @@ class Settings:
             max_iterations=int(os.getenv("MAX_ITERATIONS", "10")),
             max_facts=int(os.getenv("MAX_FACTS", "30")),
             tool_timeout_seconds=int(os.getenv("TOOL_TIMEOUT_SECONDS", "10")),
+            tool_max_retries=int(os.getenv("TOOL_MAX_RETRIES", "1")),
             reasoning_trace_limit=int(os.getenv("REASONING_TRACE_LIMIT", "20")),
         )
 

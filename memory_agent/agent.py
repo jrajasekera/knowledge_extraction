@@ -7,6 +7,7 @@ import time
 from typing import Any, Callable, Dict, Iterable
 
 from langgraph.graph import StateGraph, END
+from pydantic import ValidationError
 
 from .config import AgentConfig
 from .conversation import extract_insights
@@ -50,6 +51,7 @@ class MemoryAgent:
             "max_facts": max_facts,
             "max_messages": max_messages,
             "max_iterations": max_iterations,
+            "tool_max_retries": self.config.tool_max_retries,
             "messages": [],
             "retrieved_facts": [],
             "retrieved_messages": [],
@@ -302,33 +304,66 @@ def create_memory_agent_graph(
                 "pending_tool": None,
                 "reasoning_trace": update_reasoning(state, f"Tool {tool_name} unavailable."),
             }
-        logger.info("Executing tool %s with input %s", tool_name, tool_input)
-        start = time.perf_counter()
-        try:
-            result = tool(tool_input)
-        except ToolError as exc:
-            logger.warning("Tool %s failed: %s", tool_name, exc)
+        max_retries = state.get("tool_max_retries", 0)
+        attempts = 0
+        last_error: str | None = None
+        result = None
+        duration_ms = 0
+        logger.info(
+            "Executing tool %s with input %s (max_retries=%d)",
+            tool_name,
+            tool_input,
+            max_retries,
+        )
+
+        for attempt in range(1, max_retries + 2):
+            attempts = attempt
+            start = time.perf_counter()
+            try:
+                result = tool(tool_input)
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                break
+            except (ToolError, ValidationError, Exception) as exc:  # noqa: BLE001
+                last_error = str(exc)
+                duration_ms = int((time.perf_counter() - start) * 1000)
+                retryable = not isinstance(exc, ValidationError) and attempt <= max_retries
+                logger.warning(
+                    "Tool %s failed on attempt %d/%d: %s",
+                    tool_name,
+                    attempt,
+                    max_retries + 1,
+                    exc,
+                    exc_info=not isinstance(exc, ToolError),
+                )
+                if not retryable:
+                    break
+
+        if result is None:
             tool_calls = list(state.get("tool_calls", []))
             tool_calls.append(
                 {
                     "name": tool_name,
                     "input": to_serializable(tool_input),
                     "result_count": 0,
-                    "error": str(exc),
+                    "error": last_error,
                     "success": False,
-                    "duration_ms": int((time.perf_counter() - start) * 1000),
+                    "attempts": attempts,
+                    "duration_ms": duration_ms,
                     "timestamp": time.time(),
                 }
             )
-            reasoning_msg = f"Tool {tool_name} failed; continuing with fallback."
+            reasoning_msg = (
+                f"Tool {tool_name} failed after {attempts} attempt(s); continuing with fallback."
+            )
             return {
                 "tool_calls": tool_calls,
                 "pending_tool": None,
                 "iteration": state.get("iteration", 0) + 1,
                 "reasoning_trace": update_reasoning(state, reasoning_msg),
             }
+
         facts = normalize_to_facts(tool_name, result)
-        logger.info("Tool %s returned %d facts", tool_name, len(facts))
+        logger.info("Tool %s returned %d facts on attempt %d", tool_name, len(facts), attempts)
 
         meaningful_facts = [fact for fact in facts if fact.fact_type != "CONVERSATION_MENTION"]
 
@@ -343,6 +378,7 @@ def create_memory_agent_graph(
                 "result_count": len(meaningful_facts),
                 "success": len(meaningful_facts) > 0,
                 "duration_ms": duration_ms,
+                "attempts": attempts,
                 "timestamp": time.time(),
             }
         )

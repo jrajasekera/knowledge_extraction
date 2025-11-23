@@ -19,6 +19,7 @@ class AgentState(TypedDict, total=False):
     max_facts: int
     max_messages: int
     max_iterations: int
+    tool_max_retries: int
 
     # LangGraph specific messages container
     messages: Annotated[list[Any], add_messages]

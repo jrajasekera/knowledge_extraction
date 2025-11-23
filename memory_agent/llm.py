@@ -312,6 +312,9 @@ class LLMClient:
             "Last: 'Does anyone have experience with Kubernetes in production?'\n"
             "Goal: 'Identify people with production Kubernetes deployment experience'\n\n"
 
+            "Last: 'What does he thinks about this?'\n"
+            "Goal: 'Find out what [resolve person from history] thinks about [resolve topic from history]'\n\n"
+
             "Last: 'Tell me about the AI team members'\n"
             "Goal: 'Find people who work on or are associated with AI projects'\n\n"
 
@@ -323,6 +326,9 @@ class LLMClient:
 
             "Last: 'Is it Friday yet?'\n"
             "Goal: 'No retrieval needed'\n\n"
+
+            "Last: 'What are your favorite quotes by [person]?'\n"
+            "Goal: 'Find notable quotes by [person]'\n\n"
 
             "Return ONLY the goal text (no JSON, no markdown, just the plain goal statement)."
         )
