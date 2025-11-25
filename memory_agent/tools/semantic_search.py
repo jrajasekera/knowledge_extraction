@@ -31,6 +31,13 @@ DEFAULT_MULTI_QUERY_BOOST = 0.0
 # Hybrid search: offset for keyword query indices to treat them as separate "voters" in RRF
 KEYWORD_QUERY_OFFSET = 1000
 
+# Adaptive threshold configuration
+ADAPTIVE_THRESHOLD_MAX = 0.75
+ADAPTIVE_THRESHOLD_MIN = 0.35
+ADAPTIVE_THRESHOLD_STEP = 0.05
+ADAPTIVE_TARGET_RATIO = 0.8
+ADAPTIVE_SEARCH_RESULT_MULTIPLIER = 2.0
+
 
 @dataclass
 class FactOccurrence:
@@ -80,7 +87,10 @@ class SemanticSearchInput(BaseModel):
 
     queries: list[str] = Field(min_length=1, max_length=20)
     limit: int = Field(default=10, ge=1, le=50)
-    similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    similarity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    adaptive_threshold: bool = Field(default=True)
+    adaptive_threshold_max: float = Field(default=ADAPTIVE_THRESHOLD_MAX, ge=0.0, le=1.0)
+    adaptive_threshold_min: float = Field(default=ADAPTIVE_THRESHOLD_MIN, ge=0.0, le=1.0)
     fusion_method: Literal["rrf", "score_sum", "score_max"] = Field(default=DEFAULT_FUSION_METHOD)
     multi_query_boost: float = Field(default=DEFAULT_MULTI_QUERY_BOOST, ge=0.0, le=1.0)
 
@@ -210,266 +220,268 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
             appeared_in_query_count=appeared_in_query_count,
         )
 
-    def run(self, input_data: SemanticSearchInput) -> SemanticSearchOutput:
-        """Execute semantic search with RRF-based multi-query fusion.
+    @staticmethod
+    def _extract_relationship_type(properties: dict[str, Any]) -> str | None:
+        """Extract relationship_type from attributes for deduplication."""
 
-        Process:
-        1. Generate embeddings for each query
-        2. Execute vector searches
-        3. Track observations in FactOccurrence objects
-        4. Apply similarity threshold filtering
-        5. Calculate combined scores using selected fusion method
-        6. Sort and limit results
+        attributes_raw = properties.get("attributes")
 
-        Args:
-            input_data: Search parameters including queries and fusion method
+        if isinstance(attributes_raw, str):
+            try:
+                import json
 
-        Returns:
-            SemanticSearchOutput with fused results
-        """
-        logger.info(
-            "semantic_search_facts called: queries=%r, limit=%d, similarity_threshold=%.2f, "
-            "fusion_method=%s, index=%s",
-            input_data.queries,
-            input_data.limit,
-            input_data.similarity_threshold,
-            input_data.fusion_method,
-            self.index_name,
-        )
+                attributes = json.loads(attributes_raw)
+                return (
+                    str(attributes.get("relationship_type"))
+                    if attributes.get("relationship_type")
+                    else None
+                )
+            except json.JSONDecodeError:
+                return None
 
-        # Track fact occurrences across queries
+        if isinstance(attributes_raw, dict):
+            return (
+                str(attributes_raw.get("relationship_type"))
+                if attributes_raw.get("relationship_type")
+                else None
+            )
+
+        return None
+
+    def _execute_search_pass(
+        self,
+        input_data: SemanticSearchInput,
+        similarity_threshold: float,
+        *,
+        search_limit: int | None = None,
+    ) -> dict[tuple[str, str, str | None, str | None], FactOccurrence]:
+        """Execute a single search pass at the given threshold."""
+
         occurrences: dict[tuple[str, str, str | None, str | None], FactOccurrence] = {}
+        per_query_limit = int(search_limit or input_data.limit)
 
-        # Metrics for logging
-        total_raw_results = 0
-        total_filtered_by_threshold = 0
-        total_missing_node = 0
-        queries_processed = 0
-
-        # Process each query
         for query_idx, query in enumerate(input_data.queries, 1):
-            logger.info("Processing query %d/%d: %r", query_idx, len(input_data.queries), query)
+            logger.info(
+                "Processing query %d/%d at threshold %.2f: %r",
+                query_idx,
+                len(input_data.queries),
+                similarity_threshold,
+                query,
+            )
 
-            # --- HYBRID SEARCH: Execute both vector and keyword searches ---
-
-            # 1. Vector Search
-            vector_rows = []
+            vector_rows: list[dict[str, Any]] = []
             embedding = self.embeddings.embed_single(query)
             if embedding:
-                logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
                 try:
                     vector_rows = run_vector_query(
                         self.context,
                         self.index_name,
                         embedding,
-                        input_data.limit,
+                        per_query_limit,
                         None,
                     )
-                    logger.info("Query %d vector search returned %d results", query_idx, len(vector_rows))
+                    logger.info(
+                        "Query %d vector search returned %d results",
+                        query_idx,
+                        len(vector_rows),
+                    )
                 except ToolError as exc:
                     logger.warning("Query %d vector search failed: %s", query_idx, exc)
             else:
                 logger.warning("Failed to generate embedding for query %d: %r", query_idx, query)
 
-            # 2. Keyword Search
-            keyword_rows = []
+            keyword_rows: list[dict[str, Any]] = []
             try:
                 keyword_rows = run_keyword_query(
                     self.context,
                     query,
-                    input_data.limit,
+                    per_query_limit,
                 )
-                logger.info("Query %d keyword search returned %d results", query_idx, len(keyword_rows))
+                logger.info(
+                    "Query %d keyword search returned %d results",
+                    query_idx,
+                    len(keyword_rows),
+                )
             except ToolError as exc:
                 logger.warning("Query %d keyword search failed: %s", query_idx, exc)
-
-            # Skip this query if both searches failed
-            if not vector_rows and not keyword_rows:
-                logger.warning("Query %d: Both vector and keyword search failed or returned no results", query_idx)
-                continue
-
-            queries_processed += 1
-            total_raw_results += len(vector_rows) + len(keyword_rows)
-
-            # --- Process results from both sources ---
-            # Vector results use query_idx, keyword results use query_idx + KEYWORD_QUERY_OFFSET
-            # This treats them as separate "voters" in the RRF system
 
             search_batches = [
                 (vector_rows, query_idx, "vector"),
                 (keyword_rows, query_idx + KEYWORD_QUERY_OFFSET, "keyword"),
             ]
 
-            filtered_by_threshold = 0
-            missing_node = 0
-            added_new = 0
-            updated_existing = 0
-
             for rows, effective_query_idx, source_type in search_batches:
                 for rank, row in enumerate(rows, start=1):
-                    node = row.get("node")
                     score = row.get("score", 0.0)
-                    evidence_with_content = row.get("evidence_with_content", [])
-
-                    # Apply similarity threshold
-                    if input_data.similarity_threshold and score < input_data.similarity_threshold:
-                        filtered_by_threshold += 1
+                    if score < similarity_threshold:
                         logger.debug(
                             "Query %d (%s): Filtered result with score %.3f (below threshold %.2f)",
                             query_idx,
                             source_type,
                             score,
-                            input_data.similarity_threshold,
+                            similarity_threshold,
                         )
                         continue
 
+                    node = row.get("node")
                     if not node:
-                        missing_node += 1
                         logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
                         continue
 
-                    # Parse node properties
                     properties = dict(node)
-
-                    # Create deduplication key
                     person_id = properties.get("person_id", "")
                     fact_type = properties.get("fact_type", "")
                     fact_object = properties.get("fact_object")
-
-                    # Extract relationship_type from attributes for proper deduplication
-                    attributes_raw = properties.get("attributes")
-                    relationship_type = None
-                    if isinstance(attributes_raw, str):
-                        try:
-                            import json
-                            attributes = json.loads(attributes_raw)
-                            relationship_type = str(attributes.get("relationship_type")) if attributes.get("relationship_type") else None
-                        except json.JSONDecodeError:
-                            pass
-                    elif isinstance(attributes_raw, dict):
-                        relationship_type = str(attributes_raw.get("relationship_type")) if attributes_raw.get("relationship_type") else None
+                    relationship_type = self._extract_relationship_type(properties)
 
                     dedup_key = (person_id, fact_type, fact_object, relationship_type)
 
-                    # Use evidence_with_content if available, fallback to evidence IDs
+                    evidence_with_content = row.get("evidence_with_content", [])
                     evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []
 
-                    # Track or update occurrence
                     occurrence = occurrences.get(dedup_key)
                     if occurrence is None:
-                        occurrence = FactOccurrence(properties=properties, best_score=score, evidence=evidence)
-                        occurrence.add_observation(effective_query_idx, score, rank, properties, evidence)
+                        occurrence = FactOccurrence(
+                            properties=properties,
+                            best_score=score,
+                            evidence=evidence,
+                        )
                         occurrences[dedup_key] = occurrence
-                        added_new += 1
-                        logger.debug(
-                            "Query %d (%s): Added new fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
-                            query_idx,
-                            source_type,
-                            properties.get("person_name", person_id),
-                            fact_type,
-                            fact_object,
-                            score,
-                            rank,
-                        )
-                    else:
-                        occurrence.add_observation(effective_query_idx, score, rank, properties, evidence)
-                        updated_existing += 1
-                        logger.debug(
-                            "Query %d (%s): Updated existing fact: person=%s, fact_type=%s, object=%s, score=%.3f, rank=%d",
-                            query_idx,
-                            source_type,
-                        properties.get("person_name", person_id),
-                        fact_type,
-                        fact_object,
-                        score,
-                        rank,
-                        )
 
-            total_filtered_by_threshold += filtered_by_threshold
-            total_missing_node += missing_node
+                    occurrence.add_observation(
+                        effective_query_idx, score, rank, properties, evidence
+                    )
+
+        return occurrences
+
+    def _search_with_adaptive_threshold(
+        self, input_data: SemanticSearchInput
+    ) -> tuple[dict[tuple[str, str, str | None, str | None], FactOccurrence], float]:
+        """Execute search with adaptive threshold adjustment."""
+
+        target_count = int(input_data.limit * ADAPTIVE_TARGET_RATIO)
+        current_threshold = input_data.adaptive_threshold_max
+        best_occurrences: dict[tuple[str, str, str | None, str | None], FactOccurrence] = {}
+        best_threshold = current_threshold
+
+        max_iterations = int(
+            (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
+            / ADAPTIVE_THRESHOLD_STEP
+        ) + 1
+
+        search_limit = int(
+            max(input_data.limit * ADAPTIVE_SEARCH_RESULT_MULTIPLIER, input_data.limit)
+        )
+
+        iterations = 0
+        while current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations:
+            iterations += 1
 
             logger.info(
-                "Query %d summary: vector_results=%d, keyword_results=%d, filtered=%d, missing_node=%d, added_new=%d, updated_existing=%d",
-                query_idx,
-                len(vector_rows),
-                len(keyword_rows),
-                filtered_by_threshold,
-                missing_node,
-                added_new,
-                updated_existing,
+                "Adaptive search iteration %d: threshold=%.2f, target=%d",
+                iterations,
+                current_threshold,
+                target_count,
             )
 
-        logger.info("Total unique facts before fusion: %d", len(occurrences))
+            occurrences = self._execute_search_pass(
+                input_data=input_data,
+                similarity_threshold=current_threshold,
+                search_limit=search_limit,
+            )
 
-        # Calculate combined scores and build results
-        results_with_scores: list[SemanticSearchResult] = []
-        for dedup_key, occurrence in occurrences.items():
+            unique_count = len(occurrences)
+            logger.info(
+                "Adaptive search iteration %d: found %d unique facts",
+                iterations,
+                unique_count,
+            )
+
+            if unique_count > len(best_occurrences):
+                best_occurrences = occurrences
+                best_threshold = current_threshold
+
+            if unique_count >= target_count:
+                logger.info(
+                    "Adaptive threshold converged: threshold=%.2f, results=%d, target=%d",
+                    current_threshold,
+                    unique_count,
+                    target_count,
+                )
+                return occurrences, current_threshold
+
+            current_threshold -= ADAPTIVE_THRESHOLD_STEP
+
+        logger.info(
+            "Adaptive threshold exhausted: final_threshold=%.2f, results=%d, target=%d",
+            best_threshold,
+            len(best_occurrences),
+            target_count,
+        )
+
+        return best_occurrences, best_threshold
+
+    def _build_results_from_occurrences(
+        self,
+        occurrences: dict[tuple[str, str, str | None, str | None], FactOccurrence],
+        fusion_method: str,
+        multi_query_boost: float,
+    ) -> list[SemanticSearchResult]:
+        results: list[SemanticSearchResult] = []
+
+        for occurrence in occurrences.values():
             combined_score = self._calculate_combined_score(
                 occurrence,
-                input_data.fusion_method,
-                input_data.multi_query_boost,
+                fusion_method,
+                multi_query_boost,
             )
-
-            # Use evidence from the best observation (includes message content, not just IDs)
-            evidence = occurrence.evidence
 
             result = self._build_result(
                 occurrence.properties,
                 combined_score,
-                evidence,
+                occurrence.evidence,
                 query_scores=dict(occurrence.query_scores),
             )
-            results_with_scores.append(result)
+            results.append(result)
 
-        # Log fusion statistics
-        facts_in_multiple_queries = sum(1 for occ in occurrences.values() if len(occ.query_scores) > 1)
-        avg_queries_per_fact = (
-            sum(len(occ.query_scores) for occ in occurrences.values()) / len(occurrences)
-            if occurrences
-            else 0.0
+        return results
+
+    def run(self, input_data: SemanticSearchInput) -> SemanticSearchOutput:
+        logger.info(
+            "semantic_search_facts called: queries=%r, limit=%d, adaptive=%s, index=%s",
+            input_data.queries,
+            input_data.limit,
+            input_data.adaptive_threshold,
+            self.index_name,
         )
 
+        adaptive_mode = input_data.adaptive_threshold and input_data.similarity_threshold is None
+
+        if adaptive_mode:
+            occurrences, final_threshold = self._search_with_adaptive_threshold(input_data)
+        else:
+            threshold = input_data.similarity_threshold if input_data.similarity_threshold is not None else 0.6
+            occurrences = self._execute_search_pass(
+                input_data,
+                threshold,
+                search_limit=input_data.limit,
+            )
+            final_threshold = threshold
+
         logger.info(
-            "Fact fusion summary: total_unique_facts=%d, facts_in_multiple_queries=%d, "
-            "avg_queries_per_fact=%.2f, fusion_method=%s",
+            "Semantic search finished: mode=%s, final_threshold=%.2f, unique_facts=%d",
+            "adaptive" if adaptive_mode else "fixed",
+            final_threshold,
             len(occurrences),
-            facts_in_multiple_queries,
-            avg_queries_per_fact,
+        )
+
+        results_with_scores = self._build_results_from_occurrences(
+            occurrences,
             input_data.fusion_method,
+            input_data.multi_query_boost,
         )
 
-        # Sort by combined score descending
         ordered = sorted(results_with_scores, key=lambda r: r.similarity_score, reverse=True)
-
-        # Apply final limit
         final_results = ordered[: input_data.limit]
-
-        # Log top results for debugging
-        for result in final_results[:5]:
-            occurrence_key = (result.person_id, result.fact_type, result.fact_object,
-                             result.attributes.get("relationship_type") if result.attributes else None)
-            occurrence = occurrences.get(occurrence_key)
-            if occurrence:
-                logger.debug(
-                    "Top result after fusion: person=%s, fact_type=%s, combined_score=%.3f, "
-                    "appeared_in=%d, query_scores=%s",
-                    result.person_name,
-                    result.fact_type,
-                    result.similarity_score,
-                    len(occurrence.query_scores),
-                    occurrence.query_scores,
-                )
-
-        logger.info(
-            "semantic_search_facts completed: queries=%d, queries_processed=%d, total_raw_results=%d, "
-            "total_filtered=%d, total_missing_node=%d, unique_facts=%d, final_results=%d",
-            len(input_data.queries),
-            queries_processed,
-            total_raw_results,
-            total_filtered_by_threshold,
-            total_missing_node,
-            len(ordered),
-            len(final_results),
-        )
 
         return SemanticSearchOutput(queries=input_data.queries, results=final_results)

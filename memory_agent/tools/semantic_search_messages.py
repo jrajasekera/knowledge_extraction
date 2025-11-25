@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field
 
 from ..embeddings import EmbeddingProvider
 from .base import ToolBase, ToolContext, ToolError
+from .semantic_search import (
+    ADAPTIVE_SEARCH_RESULT_MULTIPLIER,
+    ADAPTIVE_TARGET_RATIO,
+    ADAPTIVE_THRESHOLD_MAX,
+    ADAPTIVE_THRESHOLD_MIN,
+    ADAPTIVE_THRESHOLD_STEP,
+)
 from .utils import run_keyword_query, run_vector_query
 
 
@@ -107,7 +114,10 @@ class SemanticSearchMessagesInput(BaseModel):
 
     queries: list[str] = Field(min_length=1, max_length=20)
     limit: int = Field(default=10, ge=1, le=50)
-    similarity_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    similarity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    adaptive_threshold: bool = Field(default=True)
+    adaptive_threshold_max: float = Field(default=ADAPTIVE_THRESHOLD_MAX, ge=0.0, le=1.0)
+    adaptive_threshold_min: float = Field(default=ADAPTIVE_THRESHOLD_MIN, ge=0.0, le=1.0)
     results_per_query: int = Field(default=DEFAULT_RESULTS_PER_QUERY, ge=1, le=100)
     fusion_method: Literal["rrf", "score_sum", "score_max"] = Field(default=DEFAULT_FUSION_METHOD)
     multi_query_boost: float = Field(default=DEFAULT_MULTI_QUERY_BOOST, ge=0.0, le=1.0)
@@ -220,56 +230,39 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             raise ToolError(msg)
         return model
 
-    def run(self, input_data: SemanticSearchMessagesInput) -> SemanticSearchMessagesOutput:
-        logger.info(
-            "semantic_search_messages called: queries=%r, limit=%d, similarity_threshold=%.2f, index=%s",
-            input_data.queries,
-            input_data.limit,
-            input_data.similarity_threshold,
-            self.index_name,
-        )
-
-        filters: dict[str, Any] = {}
-        # Disable filtering by IDs for now to improve recall
-        # if input_data.channel_ids:
-        #     filters["channel_id"] = input_data.channel_ids
-        # if input_data.author_ids:
-        #     filters["author_id"] = input_data.author_ids
-        # if input_data.guild_ids:
-        #     filters["guild_id"] = input_data.guild_ids
-
-        if filters:
-            logger.info("Applying filters: %s", filters)
-
-        start_dt = self._normalize_range(input_data.start_timestamp)
-        end_dt = self._normalize_range(input_data.end_timestamp)
-        if start_dt or end_dt:
-            logger.info("Time range filter: start=%s, end=%s", start_dt, end_dt)
+    def _execute_search_pass(
+        self,
+        input_data: SemanticSearchMessagesInput,
+        similarity_threshold: float,
+        *,
+        search_limit: int,
+        start_dt: datetime | None,
+        end_dt: datetime | None,
+        filters: dict[str, Any],
+    ) -> dict[str, MessageOccurrence]:
+        """Execute a single search pass at the given threshold."""
 
         occurrences: dict[str, MessageOccurrence] = {}
-        total_raw_results = 0
-        total_filtered_by_threshold = 0
-        total_filtered_by_time = 0
-        total_missing_node = 0
-        total_filtered_by_content = 0
-        queries_processed = 0
+        per_query_limit = int(search_limit or input_data.results_per_query)
 
         for query_idx, query in enumerate(input_data.queries, 1):
-            logger.info("Processing query %d/%d: %r", query_idx, len(input_data.queries), query)
+            logger.info(
+                "Processing query %d/%d at threshold %.2f: %r",
+                query_idx,
+                len(input_data.queries),
+                similarity_threshold,
+                query,
+            )
 
-            # --- HYBRID SEARCH: Execute both vector and keyword searches ---
-
-            # 1. Vector Search
-            vector_rows = []
+            vector_rows: list[dict[str, Any]] = []
             embedding = self.embeddings.embed_single(query)
             if embedding:
-                logger.debug("Generated embedding vector of length %d for query %d", len(embedding), query_idx)
                 try:
                     vector_rows = run_vector_query(
                         self.context,
                         self.index_name,
                         embedding,
-                        input_data.results_per_query,
+                        per_query_limit,
                         filters,
                         include_evidence=False,
                     )
@@ -279,62 +272,39 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             else:
                 logger.warning("Failed to generate embedding for query %d: %r", query_idx, query)
 
-            # 2. Keyword Search
-            keyword_rows = []
+            keyword_rows: list[dict[str, Any]] = []
             try:
                 keyword_rows = run_keyword_query(
                     self.context,
                     query,
-                    input_data.results_per_query,
+                    per_query_limit,
                     index_name="message_fulltext",
                 )
                 logger.info("Query %d keyword search returned %d results", query_idx, len(keyword_rows))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Query %d keyword search failed: %s", query_idx, exc)
 
-            # Skip this query if both searches failed
-            if not vector_rows and not keyword_rows:
-                logger.warning("Query %d: Both vector and keyword search failed or returned no results", query_idx)
-                continue
-
-            queries_processed += 1
-            total_raw_results += len(vector_rows) + len(keyword_rows)
-
-            # --- Process results from both sources ---
-            # Vector results use query_idx, keyword results use query_idx + KEYWORD_QUERY_OFFSET
-            # This treats them as separate "voters" in the RRF system
-
             search_batches = [
                 (vector_rows, query_idx, "vector"),
                 (keyword_rows, query_idx + KEYWORD_QUERY_OFFSET, "keyword"),
             ]
 
-            filtered_by_threshold = 0
-            filtered_by_time = 0
-            missing_node = 0
-            added_new = 0
-            updated_existing = 0
-            filtered_by_content = 0
-
             for rows, effective_query_idx, source_type in search_batches:
                 for rank, row in enumerate(rows, start=1):
-                    node = row.get("node")
                     score = float(row.get("score", 0.0))
 
-                    # Apply similarity threshold
-                    if score < input_data.similarity_threshold:
-                        filtered_by_threshold += 1
+                    if score < similarity_threshold:
                         logger.debug(
                             "Query %d (%s): Filtered result with score %.3f (below threshold %.2f)",
                             query_idx,
                             source_type,
                             score,
-                            input_data.similarity_threshold,
+                            similarity_threshold,
                         )
                         continue
 
+                    node = row.get("node")
                     if not node:
-                        missing_node += 1
                         logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
                         continue
 
@@ -344,7 +314,6 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
 
                     normalized_content = (properties.get("clean_content") or properties.get("content") or "").strip().lower()
                     if normalized_content in BLACKLISTED_CONTENT:
-                        filtered_by_content += 1
                         logger.debug(
                             "Query %d (%s): Skipped blacklisted content '%s' for message_id=%s",
                             query_idx,
@@ -354,9 +323,7 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                         )
                         continue
 
-                    # Apply time range filters
                     if start_dt and (timestamp_dt is None or timestamp_dt < start_dt):
-                        filtered_by_time += 1
                         logger.debug(
                             "Query %d (%s): Filtered message before start time: %s < %s",
                             query_idx,
@@ -365,8 +332,8 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                             start_dt,
                         )
                         continue
+
                     if end_dt and (timestamp_dt is None or timestamp_dt > end_dt):
-                        filtered_by_time += 1
                         logger.debug(
                             "Query %d (%s): Filtered message after end time: %s > %s",
                             query_idx,
@@ -381,56 +348,103 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
 
                     if occurrence is None:
                         occurrence = MessageOccurrence(properties=properties, best_score=score)
-                        occurrence.add_observation(effective_query_idx, score, rank, properties)
                         occurrences[key] = occurrence
-                        added_new += 1
-                        logger.debug(
-                            "Query %d (%s): Added new message: message_id=%s, author=%s, score=%.3f, rank=%d",
-                            query_idx,
-                            source_type,
-                            key,
-                            properties.get("author_name"),
-                            score,
-                            rank,
-                        )
-                    else:
-                        occurrence.add_observation(effective_query_idx, score, rank, properties)
-                        updated_existing += 1
-                        logger.debug(
-                            "Query %d (%s): Updated existing message: message_id=%s, author=%s, score=%.3f, rank=%d",
-                            query_idx,
-                            source_type,
-                            key,
-                            properties.get("author_name"),
-                            score,
-                            rank,
-                        )
 
-            total_filtered_by_threshold += filtered_by_threshold
-            total_filtered_by_time += filtered_by_time
-            total_missing_node += missing_node
-            total_filtered_by_content += filtered_by_content
+                    occurrence.add_observation(effective_query_idx, score, rank, properties)
+
+        return occurrences
+
+    def _search_with_adaptive_threshold(
+        self,
+        input_data: SemanticSearchMessagesInput,
+        *,
+        start_dt: datetime | None,
+        end_dt: datetime | None,
+        filters: dict[str, Any],
+    ) -> tuple[dict[str, MessageOccurrence], float]:
+        """Execute adaptive search for messages."""
+
+        target_count = int(input_data.limit * ADAPTIVE_TARGET_RATIO)
+        current_threshold = input_data.adaptive_threshold_max
+        best_occurrences: dict[str, MessageOccurrence] = {}
+        best_threshold = current_threshold
+
+        max_iterations = int(
+            (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
+            / ADAPTIVE_THRESHOLD_STEP
+        ) + 1
+
+        search_limit = int(
+            max(
+                input_data.results_per_query,
+                input_data.limit * ADAPTIVE_SEARCH_RESULT_MULTIPLIER,
+            )
+        )
+
+        iterations = 0
+        while current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations:
+            iterations += 1
+
             logger.info(
-                "Query %d summary: vector_results=%d, keyword_results=%d, filtered_threshold=%d, filtered_time=%d, missing_node=%d, filtered_content=%d, added_new=%d, updated_existing=%d",
-                query_idx,
-                len(vector_rows),
-                len(keyword_rows),
-                filtered_by_threshold,
-                filtered_by_time,
-                missing_node,
-                filtered_by_content,
-                added_new,
-                updated_existing,
+                "Adaptive message search iteration %d: threshold=%.2f, target=%d",
+                iterations,
+                current_threshold,
+                target_count,
             )
 
-        logger.info("Total unique messages before fusion: %d", len(occurrences))
+            occurrences = self._execute_search_pass(
+                input_data,
+                current_threshold,
+                search_limit=search_limit,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                filters=filters,
+            )
 
+            unique_count = len(occurrences)
+            logger.info(
+                "Adaptive message search iteration %d: found %d unique messages",
+                iterations,
+                unique_count,
+            )
+
+            if unique_count > len(best_occurrences):
+                best_occurrences = occurrences
+                best_threshold = current_threshold
+
+            if unique_count >= target_count:
+                logger.info(
+                    "Adaptive message threshold converged: threshold=%.2f, results=%d, target=%d",
+                    current_threshold,
+                    unique_count,
+                    target_count,
+                )
+                return occurrences, current_threshold
+
+            current_threshold -= ADAPTIVE_THRESHOLD_STEP
+
+        logger.info(
+            "Adaptive message threshold exhausted: final_threshold=%.2f, results=%d, target=%d",
+            best_threshold,
+            len(best_occurrences),
+            target_count,
+        )
+
+        return best_occurrences, best_threshold
+
+    def _build_results_from_occurrences(
+        self,
+        occurrences: dict[str, MessageOccurrence],
+        fusion_method: str,
+        multi_query_boost: float,
+    ) -> list[SemanticSearchMessageResult]:
         results_with_scores: list[SemanticSearchMessageResult] = []
-        for message_id, occurrence in occurrences.items():
+
+        for occurrence in occurrences.values():
             combined_score = self._calculate_combined_score(
                 occurrence,
-                input_data.fusion_method,
-                input_data.multi_query_boost,
+                fusion_method,
+                multi_query_boost,
             )
             result = self._build_result(
                 occurrence.properties,
@@ -439,18 +453,61 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             )
             results_with_scores.append(result)
 
-        messages_in_multiple_queries = sum(1 for occ in occurrences.values() if len(occ.query_scores) > 1)
-        avg_queries_per_message = (
-            sum(len(occ.query_scores) for occ in occurrences.values()) / len(occurrences)
-            if occurrences
-            else 0.0
+        return results_with_scores
+
+    def run(self, input_data: SemanticSearchMessagesInput) -> SemanticSearchMessagesOutput:
+        logger.info(
+            "semantic_search_messages called: queries=%r, limit=%d, adaptive=%s, index=%s",
+            input_data.queries,
+            input_data.limit,
+            input_data.adaptive_threshold,
+            self.index_name,
         )
 
+        filters: dict[str, Any] = {}
+        # Disable filtering by IDs for now to improve recall
+        # if input_data.channel_ids:
+        #     filters["channel_id"] = input_data.channel_ids
+        # if input_data.author_ids:
+        #     filters["author_id"] = input_data.author_ids
+        # if input_data.guild_ids:
+        #     filters["guild_id"] = input_data.guild_ids
+
+        start_dt = self._normalize_range(input_data.start_timestamp)
+        end_dt = self._normalize_range(input_data.end_timestamp)
+
+        adaptive_mode = input_data.adaptive_threshold and input_data.similarity_threshold is None
+
+        if adaptive_mode:
+            occurrences, final_threshold = self._search_with_adaptive_threshold(
+                input_data,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                filters=filters,
+            )
+        else:
+            threshold = input_data.similarity_threshold if input_data.similarity_threshold is not None else 0.6
+            occurrences = self._execute_search_pass(
+                input_data,
+                threshold,
+                search_limit=input_data.results_per_query,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                filters=filters,
+            )
+            final_threshold = threshold
+
         logger.info(
-            "Message fusion summary: total_unique_messages=%d, messages_in_multiple_queries=%d, avg_queries_per_message=%.2f",
+            "semantic_search_messages finished: mode=%s, final_threshold=%.2f, unique_messages=%d",
+            "adaptive" if adaptive_mode else "fixed",
+            final_threshold,
             len(occurrences),
-            messages_in_multiple_queries,
-            avg_queries_per_message,
+        )
+
+        results_with_scores = self._build_results_from_occurrences(
+            occurrences,
+            input_data.fusion_method,
+            input_data.multi_query_boost,
         )
 
         def _sort_key(result: SemanticSearchMessageResult) -> tuple[float, float, str]:
@@ -499,30 +556,6 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             "Deduplicated messages by author/content: filtered_duplicates=%d, reintroduced_duplicates=%d, final_results=%d",
             duplicates_filtered,
             duplicates_reintroduced,
-            len(limited),
-        )
-
-        for result in limited[:5]:
-            occurrence = occurrences[result.message_id]
-            logger.debug(
-                "Top result after fusion: message_id=%s, combined_score=%.3f, appeared_in=%d, query_scores=%s",
-                result.message_id,
-                result.similarity_score,
-                len(occurrence.query_scores),
-                occurrence.query_scores,
-            )
-
-        logger.info(
-            "semantic_search_messages completed: queries=%d, queries_processed=%d, total_raw_results=%d, "
-            "total_filtered_threshold=%d, total_filtered_time=%d, total_filtered_content=%d, total_missing_node=%d, unique_messages=%d, final_results=%d",
-            len(input_data.queries),
-            queries_processed,
-            total_raw_results,
-            total_filtered_by_threshold,
-            total_filtered_by_time,
-            total_filtered_by_content,
-            total_missing_node,
-            len(ordered),
             len(limited),
         )
 

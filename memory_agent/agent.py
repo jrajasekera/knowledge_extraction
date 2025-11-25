@@ -266,6 +266,12 @@ def create_memory_agent_graph(
                                 parameters["queries"] = [goal_text]
                                 logger.info("Falling back to goal text for fact search")
 
+                        if "adaptive_threshold" not in parameters:
+                            parameters["adaptive_threshold"] = True
+
+                        if parameters.get("adaptive_threshold") and "similarity_threshold" in parameters:
+                            parameters.pop("similarity_threshold", None)
+
                     candidate = {"name": tool_name, "input": parameters}
                     reasoning_msg = (
                         f"LLM selected {tool_name} (confidence: {llm_result.get('confidence', 'low')}): "

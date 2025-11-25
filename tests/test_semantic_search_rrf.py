@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from memory_agent.tools.semantic_search import (
+    ADAPTIVE_THRESHOLD_MAX,
+    ADAPTIVE_THRESHOLD_MIN,
     DEFAULT_FUSION_METHOD,
     DEFAULT_MULTI_QUERY_BOOST,
     RRF_K,
@@ -268,7 +270,10 @@ class TestSemanticSearchInput:
 
         assert input_data.queries == ["startup", "founder"]
         assert input_data.limit == 10
-        assert input_data.similarity_threshold == 0.6
+        assert input_data.similarity_threshold is None
+        assert input_data.adaptive_threshold is True
+        assert input_data.adaptive_threshold_max == ADAPTIVE_THRESHOLD_MAX
+        assert input_data.adaptive_threshold_min == ADAPTIVE_THRESHOLD_MIN
         assert input_data.fusion_method == DEFAULT_FUSION_METHOD
         assert input_data.multi_query_boost == DEFAULT_MULTI_QUERY_BOOST
 
@@ -278,6 +283,7 @@ class TestSemanticSearchInput:
             queries=["query1", "query2", "query3"],
             limit=20,
             similarity_threshold=0.7,
+            adaptive_threshold=False,
             fusion_method="score_sum",
             multi_query_boost=0.5,
         )
@@ -285,6 +291,7 @@ class TestSemanticSearchInput:
         assert input_data.queries == ["query1", "query2", "query3"]
         assert input_data.limit == 20
         assert input_data.similarity_threshold == 0.7
+        assert input_data.adaptive_threshold is False
         assert input_data.fusion_method == "score_sum"
         assert input_data.multi_query_boost == 0.5
 

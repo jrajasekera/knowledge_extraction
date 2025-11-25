@@ -71,6 +71,13 @@ def _row_with(
     return {"node": base, "score": score}
 
 
+def test_messages_input_defaults_enable_adaptive():
+    input_data = SemanticSearchMessagesInput(queries=["hello"])
+
+    assert input_data.similarity_threshold is None
+    assert input_data.adaptive_threshold is True
+
+
 @patch("memory_agent.tools.semantic_search_messages.run_vector_query")
 def test_semantic_search_messages_returns_enriched_results(mock_query):
     mock_query.return_value = [_row()]
