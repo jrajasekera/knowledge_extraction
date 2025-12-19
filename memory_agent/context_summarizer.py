@@ -153,7 +153,7 @@ async def generate_context_summary(
         # Call the LLM using the general text generation method
         system_message = (
             "You are a helpful assistant that analyzes conversations and provides relevant historical context. "
-            "Generate detailed, natural paragraph summaries focusing only on information relevant to the current discussion."
+            "Generate highly detailed reports focusing only on information relevant to the current discussion."
         )
 
         # Retry up to 2 times if LLM returns empty/blank response
