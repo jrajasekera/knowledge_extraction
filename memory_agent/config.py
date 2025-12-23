@@ -198,7 +198,7 @@ class Settings:
             max_iterations=int(os.getenv("MAX_ITERATIONS", "10")),
             max_facts=int(os.getenv("MAX_FACTS", "30")),
             tool_timeout_seconds=int(os.getenv("TOOL_TIMEOUT_SECONDS", "10")),
-            tool_max_retries=int(os.getenv("TOOL_MAX_RETRIES", "1")),
+            tool_max_retries=int(os.getenv("TOOL_MAX_RETRIES", "2")),
             reasoning_trace_limit=int(os.getenv("REASONING_TRACE_LIMIT", "20")),
         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -13,6 +14,54 @@ from .base import ToolContext, ToolError
 
 
 logger = logging.getLogger(__name__)
+
+LUCENE_MAX_CLAUSES = int(os.getenv("LUCENE_MAX_CLAUSES", "4096"))
+LUCENE_TERM_CLAUSE_COST = 2  # Each term is expanded to `term OR term~`.
+LUCENE_MIN_TERM_LEN = 2
+LUCENE_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "but",
+    "by",
+    "for",
+    "from",
+    "has",
+    "have",
+    "he",
+    "her",
+    "his",
+    "i",
+    "in",
+    "is",
+    "it",
+    "its",
+    "me",
+    "my",
+    "of",
+    "on",
+    "or",
+    "our",
+    "she",
+    "so",
+    "that",
+    "the",
+    "their",
+    "them",
+    "they",
+    "this",
+    "to",
+    "was",
+    "we",
+    "were",
+    "with",
+    "you",
+    "your",
+}
 
 
 @contextmanager
@@ -127,12 +176,48 @@ def run_keyword_query(
 
     # Construct Lucene query: exact terms OR fuzzy terms (~ for edit distance)
     # For multi-word queries, apply fuzzy matching to each term
-    terms = safe_text.split()
-    lucene_parts = []
-    for term in terms:
-        # Add both exact and fuzzy match: "Python OR Python~"
-        lucene_parts.append(f"{term} OR {term}~")
+    raw_terms = safe_text.split()
+    seen_terms: set[str] = set()
+    terms: list[str] = []
+    for term in raw_terms:
+        lowered = term.lower()
+        if lowered in seen_terms or len(lowered) < LUCENE_MIN_TERM_LEN:
+            continue
+        seen_terms.add(lowered)
+        terms.append(lowered)
 
+    max_terms = max(1, LUCENE_MAX_CLAUSES // LUCENE_TERM_CLAUSE_COST)
+    if len(terms) > max_terms:
+        filtered_terms = [term for term in terms if term not in LUCENE_STOPWORDS]
+        if filtered_terms:
+            terms = filtered_terms
+
+    if len(terms) > max_terms:
+        def term_rank(term: str) -> tuple[int, int, int]:
+            has_alpha = any(char.isalpha() for char in term)
+            is_numeric = term.isdigit()
+            return (int(has_alpha), int(not is_numeric), len(term))
+
+        ranked = sorted(
+            enumerate(terms),
+            key=lambda item: (term_rank(item[1]), -item[0]),
+            reverse=True,
+        )
+        keep = {idx for idx, _ in ranked[:max_terms]}
+        original_count = len(terms)
+        terms = [term for idx, term in enumerate(terms) if idx in keep]
+        logger.info(
+            "Keyword query trimmed from %d to %d terms to respect Lucene max clauses (%d)",
+            original_count,
+            len(terms),
+            LUCENE_MAX_CLAUSES,
+        )
+
+    if not terms:
+        logger.warning("Keyword query reduced to zero terms, returning no results")
+        return []
+
+    lucene_parts = [f"{term} OR {term}~" for term in terms]
     lucene_query = " ".join(lucene_parts)
 
     query = """
