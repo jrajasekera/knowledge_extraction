@@ -430,8 +430,17 @@ class LLMClient:
             messages: list[MessageModel],
             *,
             max_queries: int = 15,
+            previous_queries: list[str] | None = None,
+            retrieved_facts: list[RetrievedFact] | None = None,
     ) -> list[str]:
-        """Derive diverse search queries for fact retrieval from recent conversation."""
+        """Derive diverse search queries for fact retrieval from recent conversation.
+
+        Args:
+            messages: Conversation messages to extract queries from.
+            max_queries: Maximum number of queries to generate.
+            previous_queries: Queries already tried in previous iterations (for deduplication).
+            retrieved_facts: Facts already retrieved (to search for complementary info).
+        """
 
         if not self.is_available or not messages:
             return []
@@ -447,6 +456,25 @@ class LLMClient:
             f"{msg.author_name}: {msg.content}" for msg in history_messages
         ) if history_messages else "(No previous messages)"
 
+        # Build context about previous attempts for iterative refinement
+        tried_context = ""
+        if previous_queries:
+            recent_tried = previous_queries[-15:]  # Show last 15 queries
+            tried_context = (
+                "## Previously Tried Queries (generate DIFFERENT queries, not these):\n"
+                + "\n".join(f'- "{q}"' for q in recent_tried)
+                + "\n\n"
+            )
+
+        found_context = ""
+        if retrieved_facts:
+            recent_facts = retrieved_facts[-10:]  # Show last 10 facts
+            found_context = (
+                "## Already Retrieved Facts (search for COMPLEMENTARY information):\n"
+                + "\n".join(f"- {format_fact(f)}" for f in recent_facts)
+                + "\n\n"
+            )
+
         prompt = (
             "You assist with retrieving relevant facts about people via semantic search.\n"
             "Your task: Generate diverse search queries based EXCLUSIVELY on the LAST MESSAGE below.\n"
@@ -457,6 +485,9 @@ class LLMClient:
 
             "## LAST MESSAGE (PRIMARY FOCUS - generate queries for THIS only):\n"
             f"```\n{last_message_text}\n```\n\n"
+
+            f"{tried_context}"
+            f"{found_context}"
 
             "## Your Task:\n"
             "Generate 15-20 search queries that find facts relevant to answering or addressing the LAST MESSAGE.\n"
@@ -482,7 +513,9 @@ class LLMClient:
             "- Think about what facts MIGHT be relevant to the LAST MESSAGE, not just obvious connections\n"
             "- Avoid duplicate or near-duplicate queries\n"
             "- Don't include 'search for' or other meta-language\n"
-            "- If the last message references something from earlier (e.g., 'that project', 'the company we discussed'), use the history to understand WHAT is being referenced, then query for that thing\n\n"
+            "- If the last message references something from earlier (e.g., 'that project', 'the company we discussed'), use the history to understand WHAT is being referenced, then query for that thing\n"
+            "- DO NOT repeat or rephrase any previously tried queries listed above\n"
+            "- Search for DIFFERENT angles than what's already been found\n\n"
 
             "Return JSON only in this format:\n"
             "{\n"
@@ -645,7 +678,17 @@ class LLMClient:
         initial_parameters: dict[str, Any],
         conversation_context: str,
         previous_results: Sequence[Any],
+        retrieved_facts: list[RetrievedFact] | None = None,
     ) -> dict[str, Any]:
+        """Refine tool parameters based on previous results and retrieved facts.
+
+        Args:
+            tool_name: Name of the tool to refine parameters for.
+            initial_parameters: Current parameters to refine.
+            conversation_context: Recent conversation for context.
+            previous_results: Previous tool call results (metadata).
+            retrieved_facts: Facts already retrieved (to search for complementary info).
+        """
         if not self.is_available:
             return {
                 "refined_parameters": initial_parameters,
@@ -658,12 +701,26 @@ class LLMClient:
             if not previous_results
             else json_dumps(previous_results, indent=2)[:800]
         )
+
+        # Add context about what was found to inform refinement
+        facts_context = ""
+        if retrieved_facts:
+            recent_facts = retrieved_facts[-10:]
+            facts_context = (
+                "## What We've Found So Far:\n"
+                + "\n".join(f"- {format_fact(f)}" for f in recent_facts)
+                + "\n\n"
+                "Consider: What's MISSING? What related topics haven't been explored?\n"
+                "Suggest parameters that find COMPLEMENTARY information, not duplicates.\n\n"
+            )
+
         prompt = (
             "Refine the parameters for a knowledge graph tool based on context and previous results.\n\n"
             f"## Tool\n{tool_name}\n\n"
             f"## Initial Parameters\n{json_dumps(initial_parameters, indent=2)}\n\n"
             f"## Conversation Context\n{conversation_context}\n\n"
             f"## Previous Results\n{previous_repr}\n\n"
+            f"{facts_context}"
             "## Output Format\n"
             "{\n"
             '  "refined_parameters": {},\n'

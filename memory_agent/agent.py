@@ -71,6 +71,8 @@ class MemoryAgent:
             "tool_selection_confidence": "low",
             "entity_extraction_results": {},
             "should_stop_evaluation": {},
+            "tried_queries": [],
+            "query_results_map": {},
         }
         recursion_limit = _estimate_recursion_limit(max_iterations)
         final_state: AgentState = await self.graph.ainvoke(
@@ -183,6 +185,49 @@ def create_memory_agent_graph(
                 return {"name": name, "input": payload}
         return None
 
+    def should_refine_search(
+        tool_calls: list[dict[str, Any]],
+        tool_name: str,
+        retrieved_facts: list[RetrievedFact],
+    ) -> bool:
+        """Determine if search needs refinement based on quality signals.
+
+        Triggers refinement when:
+        1. Previous call returned zero results
+        2. Diminishing returns (70%+ drop in results)
+        3. Low confidence facts (avg confidence < 0.4)
+        """
+        relevant_calls = [c for c in tool_calls if c.get("name") == tool_name]
+
+        if not relevant_calls:
+            return False
+
+        last_call = relevant_calls[-1]
+
+        # 1. Zero results - definitely refine
+        if last_call.get("result_count", 0) == 0:
+            return True
+
+        # 2. Diminishing returns - refine if getting significantly fewer results
+        if len(relevant_calls) >= 2:
+            prev_count = relevant_calls[-2].get("result_count", 0)
+            curr_count = last_call.get("result_count", 0)
+            if prev_count > 0 and curr_count < prev_count * 0.3:  # 70% drop
+                return True
+
+        # 3. Low confidence facts - refine if recent facts are low quality
+        if retrieved_facts:
+            result_count = last_call.get("result_count", 0)
+            if result_count > 0:
+                recent_facts = retrieved_facts[-result_count:]
+                confidences = [f.confidence for f in recent_facts if f.confidence is not None]
+                if confidences:
+                    avg_confidence = sum(confidences) / len(confidences)
+                    if avg_confidence < 0.4:  # Low average confidence
+                        return True
+
+        return False
+
     async def plan_queries(state: AgentState) -> AgentState:
         logger.info("Planning next query, iteration %s", state.get("iteration"))
         llm_reasoning_updates = list(state.get("llm_reasoning", []))
@@ -221,9 +266,11 @@ def create_memory_agent_graph(
                         if alternate:
                             parameters = alternate.get("input", {})
 
-                    should_refine = any(
-                        call.get("name") == tool_name and call.get("result_count", 0) == 0
-                        for call in state.get("tool_calls", [])
+                    # Quality-based refinement trigger
+                    should_refine = should_refine_search(
+                        state.get("tool_calls", []),
+                        tool_name,
+                        state.get("retrieved_facts", []),
                     )
                     if should_refine:
                         conversation_context = "\n".join(
@@ -236,6 +283,7 @@ def create_memory_agent_graph(
                                 parameters,
                                 conversation_context,
                                 [call for call in state.get("tool_calls", []) if call.get("name") == tool_name],
+                                retrieved_facts=state.get("retrieved_facts", []),
                             )
                             refined_parameters = refinement.get("refined_parameters")
                             if isinstance(refined_parameters, dict) and refined_parameters:
@@ -248,11 +296,26 @@ def create_memory_agent_graph(
                         if "limit" not in parameters:
                             parameters["limit"] = state.get("max_facts", config.max_facts)
 
-                        # Extract diverse fact search queries using LLM
+                        # Collect previous queries for context-aware generation
+                        previous_queries: list[str] = []
+                        for call in state.get("tool_calls", []):
+                            if call.get("name") == "semantic_search_facts":
+                                queries = call.get("input", {}).get("queries", [])
+                                if queries:
+                                    previous_queries.extend(queries)
+                        # Also include queries from the dedicated state field
+                        previous_queries.extend(state.get("tried_queries", []))
+
+                        # Extract diverse fact search queries using LLM with context
                         conversation = state.get("conversation", [])
                         if llm and conversation:
                             try:
-                                extracted_queries = await llm.extract_fact_search_queries(conversation, max_queries=15)
+                                extracted_queries = await llm.extract_fact_search_queries(
+                                    conversation,
+                                    max_queries=15,
+                                    previous_queries=previous_queries if previous_queries else None,
+                                    retrieved_facts=state.get("retrieved_facts", []) or None,
+                                )
                                 if extracted_queries:
                                     parameters["queries"] = extracted_queries
                                     logger.info("LLM produced %d fact search queries", len(extracted_queries))
@@ -376,7 +439,6 @@ def create_memory_agent_graph(
         retrieved = list(state.get("retrieved_facts", []))
         retrieved.extend(meaningful_facts)
         tool_calls = list(state.get("tool_calls", []))
-        duration_ms = int((time.perf_counter() - start) * 1000)
         tool_calls.append(
             {
                 "name": tool_name,
@@ -388,6 +450,19 @@ def create_memory_agent_graph(
                 "timestamp": time.time(),
             }
         )
+
+        # Track queries used in this execution for iterative refinement
+        queries_used = tool_input.get("queries", [])
+        tried_queries = list(state.get("tried_queries", []))
+        tried_queries.extend(queries_used)
+
+        # Track query -> result mapping for learning
+        query_results_map = dict(state.get("query_results_map", {}))
+        result_count = len(meaningful_facts)
+        for q in queries_used:
+            # Store best result count for each query
+            query_results_map[q] = max(query_results_map.get(q, 0), result_count)
+
         reasoning_msg = f"Tool {tool_name} returned {len(meaningful_facts)} actionable facts." if facts else f"Tool {tool_name} returned 0 facts."
         return {
             "retrieved_facts": retrieved,
@@ -395,6 +470,8 @@ def create_memory_agent_graph(
             "pending_tool": None,
             "iteration": state.get("iteration", 0) + 1,
             "reasoning_trace": update_reasoning(state, reasoning_msg),
+            "tried_queries": tried_queries,
+            "query_results_map": query_results_map,
         }
 
     async def evaluate_progress(state: AgentState) -> AgentState:

@@ -30,6 +30,10 @@ class AgentState(TypedDict, total=False):
     tool_calls: list[dict[str, Any]]
     iteration: int
 
+    # Query history for iterative refinement
+    tried_queries: list[str]
+    query_results_map: dict[str, int]  # query -> result count from that query
+
     # Reasoning metadata
     current_goal: str | None
     identified_entities: dict[str, Any]
