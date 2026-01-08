@@ -269,16 +269,16 @@ class DeduplicationOrchestrator:
                             )
                             partition_merge_delta += merge_delta
 
+                    if partition_deleted:
+                        deleted_fact_ids.update(partition_deleted)
+                    if partition_canonical:
+                        canonical_fact_ids.update(partition_canonical)
+
                     if partition_failed:
                         failure_detected = True
                         progress.mark_partition_status(run_id, partition, "failed")
                         progress_display.set_active_partition(None)
                         continue
-
-                    if partition_deleted:
-                        deleted_fact_ids.update(partition_deleted)
-                    if partition_canonical:
-                        canonical_fact_ids.update(partition_canonical)
 
                     stats.candidate_groups_processed += partition_group_count
                     if partition_group_count:
