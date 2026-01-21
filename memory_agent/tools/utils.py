@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from neo4j import Session
 
 from .base import ToolContext, ToolError
-
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,9 @@ def managed_session(context: ToolContext) -> Iterator[Session]:
         session.close()
 
 
-def run_read_query(context: ToolContext, query: str, parameters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def run_read_query(
+    context: ToolContext, query: str, parameters: dict[str, Any] | None = None
+) -> list[dict[str, Any]]:
     """Execute a read-only Cypher query and return list of dictionaries."""
     with managed_session(context) as session:
         result = session.run(query, parameters or {})
@@ -193,6 +195,7 @@ def run_keyword_query(
             terms = filtered_terms
 
     if len(terms) > max_terms:
+
         def term_rank(term: str) -> tuple[int, int, int]:
             has_alpha = any(char.isalpha() for char in term)
             is_numeric = term.isdigit()

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import httpx
 
@@ -37,7 +38,7 @@ class LlamaServerClient:
             "top_p": self.config.top_p,
             "max_tokens": self.config.max_tokens,
             "chat_template_kwargs": {"enable_thinking": True, "reasoning_effort": "high"},
-            "cache_prompt": True
+            "cache_prompt": True,
         }
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
@@ -49,7 +50,7 @@ class LlamaServerClient:
             return None
         return choices[0].get("message", {}).get("content")
 
-    def __enter__(self) -> "LlamaServerClient":
+    def __enter__(self) -> LlamaServerClient:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]

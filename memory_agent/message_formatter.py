@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping, Sequence
 from html import unescape
-from typing import Iterable, Mapping, Sequence
 
 from .tools.semantic_search_messages import SemanticSearchMessageResult
-
 
 CODE_BLOCK_RE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`]*)`")
@@ -43,7 +42,13 @@ def _strip_markdown(text: str) -> str:
     without_inline = INLINE_CODE_RE.sub(r"\1", without_code)
     without_links = MARKDOWN_LINK_RE.sub(r"\1", without_inline)
     without_quotes = QUOTE_RE.sub("", without_links)
-    cleaned = without_quotes.replace("**", "").replace("__", "").replace("*", "").replace("_", "").replace("~~", "")
+    cleaned = (
+        without_quotes.replace("**", "")
+        .replace("__", "")
+        .replace("*", "")
+        .replace("_", "")
+        .replace("~~", "")
+    )
     return unescape(cleaned)
 
 

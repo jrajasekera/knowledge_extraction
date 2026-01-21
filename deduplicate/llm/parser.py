@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Mapping
+from collections.abc import Mapping
 
 from data_structures.ingestion import normalize_iso_timestamp
 
@@ -36,9 +36,7 @@ class CanonicalFactsParser:
         for item in canonical_items:
             if not isinstance(item, dict):
                 raise ValueError("canonical fact entries must be objects")
-            results.append(
-                self._parse_item(item, partition=partition, facts_by_id=facts_by_id)
-            )
+            results.append(self._parse_item(item, partition=partition, facts_by_id=facts_by_id))
         return results
 
     def _parse_item(
@@ -74,9 +72,15 @@ class CanonicalFactsParser:
         confidence = self._normalize_confidence(item.get("confidence"))
         timestamp = self._normalize_timestamp(item.get("timestamp"), source_facts)
         merge_reasoning = self._extract_reasoning(item.get("merge_reasoning"))
-        object_label = self._resolve_value(item.get("object_label"), [fact.object_label for fact in source_facts])
-        object_id = self._resolve_value(item.get("object_id"), [fact.object_id for fact in source_facts])
-        object_type = self._resolve_value(item.get("object_type"), [fact.object_type for fact in source_facts])
+        object_label = self._resolve_value(
+            item.get("object_label"), [fact.object_label for fact in source_facts]
+        )
+        object_id = self._resolve_value(
+            item.get("object_id"), [fact.object_id for fact in source_facts]
+        )
+        object_type = self._resolve_value(
+            item.get("object_type"), [fact.object_type for fact in source_facts]
+        )
 
         return CanonicalFact(
             type=partition.fact_type,
@@ -97,9 +101,7 @@ class CanonicalFactsParser:
         value: object,
         source_facts: list[FactRecord],
     ) -> list[str]:
-        allowed = {
-            message_id for fact in source_facts for message_id in fact.evidence
-        }
+        allowed = {message_id for fact in source_facts for message_id in fact.evidence}
 
         if value is None:
             evidence = []

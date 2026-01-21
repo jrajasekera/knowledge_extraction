@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .models import RetrievedFact
 
@@ -13,7 +14,11 @@ def deduplicate_facts(facts: Iterable[RetrievedFact]) -> list[RetrievedFact]:
     for fact in facts:
         relationship_type = None
         if isinstance(fact.attributes, dict):
-            relationship_type = str(fact.attributes.get("relationship_type")) if fact.attributes.get("relationship_type") else None
+            relationship_type = (
+                str(fact.attributes.get("relationship_type"))
+                if fact.attributes.get("relationship_type")
+                else None
+            )
         key = (fact.person_id, fact.fact_type, fact.fact_object, relationship_type)
         existing = unique.get(key)
         if existing is None:
@@ -43,15 +48,15 @@ def format_fact(fact: RetrievedFact) -> str:
     # Format evidence with author and snippets if available
     evidence_parts = []
     for e in fact.evidence:
-        if hasattr(e, 'snippet') and e.snippet:
+        if hasattr(e, "snippet") and e.snippet:
             # Truncate long snippets
             snippet = e.snippet if len(e.snippet) <= 500 else e.snippet[:497] + "..."
             # Include author if available
-            if hasattr(e, 'author') and e.author:
+            if hasattr(e, "author") and e.author:
                 evidence_parts.append(f'{e.author}: "{snippet}"')
             else:
                 evidence_parts.append(f'"{snippet}"')
-        elif hasattr(e, 'source_id'):
+        elif hasattr(e, "source_id"):
             evidence_parts.append(e.source_id)
     evidence_text = " | ".join(evidence_parts) if evidence_parts else "unknown"
 

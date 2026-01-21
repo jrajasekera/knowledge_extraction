@@ -23,18 +23,41 @@ from memory_agent.message_embedding_pipeline import (  # noqa: E402
     run_message_embedding_pipeline,
 )
 
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("embed_messages")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Populate Neo4j message embeddings for semantic search.")
-    parser.add_argument("--settings-from-env", action="store_true", default=True, help=argparse.SUPPRESS)
-    parser.add_argument("--cleanup", action="store_true", default=False, help="Delete embeddings for messages that no longer exist.")
-    parser.add_argument("--dry-run", action="store_true", default=False, help="Compute embeddings without writing them back to Neo4j.")
-    parser.add_argument("--batch-size", type=int, default=None, help="Override embedding batch size (default from settings).")
-    parser.add_argument("--workers", type=int, default=1, help="Number of parallel workers for CPU (default: 1, recommended: 2-4)")
+    parser = argparse.ArgumentParser(
+        description="Populate Neo4j message embeddings for semantic search."
+    )
+    parser.add_argument(
+        "--settings-from-env", action="store_true", default=True, help=argparse.SUPPRESS
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        default=False,
+        help="Delete embeddings for messages that no longer exist.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Compute embeddings without writing them back to Neo4j.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override embedding batch size (default from settings).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for CPU (default: 1, recommended: 2-4)",
+    )
     return parser.parse_args()
 
 

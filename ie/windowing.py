@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict, deque
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Deque, Dict, Iterable, Iterator, Sequence
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -78,7 +78,11 @@ def _parse_aliases(raw: str | bytes | None) -> tuple[AliasEntry, ...]:
         if not alias:
             continue
         alias_type = item.get("alias_type") if isinstance(item, dict) else None
-        aliases.append(AliasEntry(name=str(alias), alias_type=str(alias_type) if alias_type is not None else None))
+        aliases.append(
+            AliasEntry(
+                name=str(alias), alias_type=str(alias_type) if alias_type is not None else None
+            )
+        )
     return tuple(aliases)
 
 
@@ -173,7 +177,9 @@ class WindowBuilder:
             )
 
     def iter_windows(self) -> Iterator[MessageWindow]:
-        buffers: Dict[str, Deque[MessageRecord]] = defaultdict(lambda: deque(maxlen=self.window_size))
+        buffers: dict[str, deque[MessageRecord]] = defaultdict(
+            lambda: deque(maxlen=self.window_size)
+        )
 
         for record in self.iter_rows():
             buffer = buffers[record.channel_id]
@@ -206,9 +212,7 @@ def iter_message_windows(
         guild_ids=guild_ids,
         author_ids=author_ids,
     )
-    count = 0
-    for window in builder.iter_windows():
+    for count, window in enumerate(builder.iter_windows(), start=1):
         yield window
-        count += 1
         if limit is not None and count >= limit:
             break

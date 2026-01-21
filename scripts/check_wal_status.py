@@ -43,20 +43,20 @@ def check_wal_status(db_path: Path) -> None:
 
     conn.close()
 
-    print(f"\n{'='*60}")
-    print(f"SQLite Database Configuration Check")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print("SQLite Database Configuration Check")
+    print(f"{'=' * 60}")
     print(f"Database: {db_path}")
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  journal_mode: {journal_mode}")
     print(f"  synchronous: {synchronous}")
     print(f"  busy_timeout: {busy_timeout}ms")
-    print(f"\nWAL files:")
+    print("\nWAL files:")
     print(f"  {wal_file.name}: {'✓ exists' if wal_file.exists() else '✗ not found'}")
     print(f"  {shm_file.name}: {'✓ exists' if shm_file.exists() else '✗ not found'}")
 
     # Overall status
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     if journal_mode.lower() == "wal":
         print("✓ WAL mode is ENABLED - concurrent access should work!")
         print("\n  You can now run:")
@@ -70,13 +70,11 @@ def check_wal_status(db_path: Path) -> None:
         print(f"  uv run python scripts/enable_wal_mode.py --db-path {db_path}")
         print("\nThis will enable WAL mode and allow concurrent access.")
 
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Check if WAL mode is enabled on SQLite database"
-    )
+    parser = argparse.ArgumentParser(description="Check if WAL mode is enabled on SQLite database")
     parser.add_argument(
         "--db-path",
         type=Path,

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
-
-from ie.types import FactType
+from collections.abc import Iterable, Sequence
 
 from ..models import CandidateGroup, FactRecord, Partition, SimilarityPair
 
@@ -72,12 +69,20 @@ class CandidateGrouper:
             if minhash_pairs:
                 group.add_similarity(
                     "minhash",
-                    [pair for pair in minhash_pairs if pair.source_id in members and pair.target_id in members],
+                    [
+                        pair
+                        for pair in minhash_pairs
+                        if pair.source_id in members and pair.target_id in members
+                    ],
                 )
             if embedding_pairs:
                 group.add_similarity(
                     "embedding",
-                    [pair for pair in embedding_pairs if pair.source_id in members and pair.target_id in members],
+                    [
+                        pair
+                        for pair in embedding_pairs
+                        if pair.source_id in members and pair.target_id in members
+                    ],
                 )
             groups.append(group)
 

@@ -31,7 +31,9 @@ def _message(content: str | None) -> GraphMessage:
         is_pinned=False,
         message_type="DEFAULT",
         mentions=[{"id": "55", "name": "Bob"}],
-        attachments=[{"id": "att-1", "url": "http://file", "file_name": "doc.pdf", "size_bytes": 10}],
+        attachments=[
+            {"id": "att-1", "url": "http://file", "file_name": "doc.pdf", "size_bytes": 10}
+        ],
         reactions=[{"emoji_id": "1", "emoji_name": ":smile:", "count": 2}],
         thread_id=None,
     )
@@ -39,10 +41,14 @@ def _message(content: str | None) -> GraphMessage:
 
 def test_generate_message_embeddings_serializes_payloads():
     provider = DummyProvider()
-    rows, skipped = generate_message_embeddings([
-        _message("Hello **world**"),
-        _message("   "),
-    ], provider, batch_size=2)
+    rows, skipped = generate_message_embeddings(
+        [
+            _message("Hello **world**"),
+            _message("   "),
+        ],
+        provider,
+        batch_size=2,
+    )
 
     assert skipped == 1
     assert len(rows) == 1

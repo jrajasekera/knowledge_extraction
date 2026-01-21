@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Pattern
+from re import Pattern
 
 from .models import MessageModel
-
 
 MENTION_PATTERN: Pattern[str] = re.compile(r"<@!?([0-9]+)>")
 

@@ -6,8 +6,9 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any
 
 from prometheus_client import Counter, Histogram
 
@@ -18,7 +19,6 @@ from .models import MessageModel, RetrievedFact
 from .serialization import json_dumps
 from .state import AgentState
 from .tools import ToolBase
-
 
 logger = logging.getLogger(__name__)
 
@@ -108,27 +108,27 @@ class LLMClient:
 
     async def agenerate_text(self, prompt: str, system_message: str | None = None) -> str:
         """Generate text using the LLM without tool-specific formatting.
-        
+
         This method is suitable for general text generation tasks like summarization,
         unlike apredict/predict which are optimized for tool selection.
-        
+
         Args:
             prompt: The user prompt
             system_message: Optional custom system message. If None, uses a general assistant message.
-            
+
         Returns:
             Generated text response
         """
         if self._llama_client is None:
             logger.debug("LLM client unavailable for text generation")
             return ""
-        
+
         default_system = "You are a helpful AI assistant."
         messages = [
             {"role": "system", "content": system_message or default_system},
             {"role": "user", "content": prompt},
         ]
-        
+
         try:
             response = self._llama_client.complete(messages, json_mode=False)
             return response if response else ""
@@ -139,6 +139,7 @@ class LLMClient:
     def generate_text(self, prompt: str, system_message: str | None = None) -> str:
         """Synchronous version of agenerate_text."""
         import asyncio
+
         return asyncio.run(self.agenerate_text(prompt, system_message))
 
     def _llama_predict(self, prompt: str) -> str:
@@ -266,72 +267,58 @@ class LLMClient:
         history_messages = messages[-6:-1] if len(messages) > 1 else []
 
         last_message_text = f"{last_message.author_name}: {last_message.content}"
-        history_text = "\n".join(
-            f"{msg.author_name}: {msg.content}" for msg in history_messages
-        ) if history_messages else "(No previous messages)"
+        history_text = (
+            "\n".join(f"{msg.author_name}: {msg.content}" for msg in history_messages)
+            if history_messages
+            else "(No previous messages)"
+        )
 
         prompt = (
             "Analyze a Discord conversation to determine what information should be retrieved.\n"
             "Focus EXCLUSIVELY on the LAST MESSAGE to understand what the user wants NOW.\n"
             "Use conversation history ONLY for context to understand references.\n\n"
-
             "## Previous Conversation (context only - for understanding references):\n"
             f"```\n{history_text}\n```\n\n"
-
             "## LAST MESSAGE (PRIMARY FOCUS - what does THIS message need?):\n"
             f"```\n{last_message_text}\n```\n\n"
-
             "## Your Task:\n"
             "Always generate a retrieval goal. Even if the message doesn't explicitly seek information,\n"
             "create a goal about gathering contextual information that could enrich the conversation.\n\n"
-
             "## Direct Information-Seeking (generate specific goals):\n"
             "- Questions about people: 'Who knows X?', 'Does anyone have Y experience?'\n"
             "- Requests for information: 'Tell me about...', 'I need to find...', 'Looking for...'\n"
             "- Implicit needs: 'We need someone with X skills', 'Anyone familiar with Y?'\n"
             "- Follow-ups referencing prior context: 'What about them?', 'Tell me more'\n\n"
-
             "## Indirect/Contextual Messages (generate context-gathering goals):\n"
             "- Casual chat: 'Hey', 'Thanks!', 'Sounds good' → Gather context about the person and recent topics\n"
             "- Rhetorical questions: 'Is it Friday yet?' → Gather context about work patterns and schedules\n"
             "- Statements of fact: 'I finished the project' → Gather context about the person's projects and skills\n"
             "- Commands/actions: 'Please update the docs' → Gather context about documentation contributors\n\n"
-
             "## Output Rules:\n"
             "ALWAYS write a clear retrieval goal (10-30 words):\n"
             "- For direct information needs: Focus on WHAT specific information to retrieve\n"
             "- For indirect messages: Focus on gathering contextual information about participants, topics, or activities\n"
             "- Use action verbs: 'Find', 'Identify', 'Locate', 'Gather', 'Retrieve', 'Collect'\n"
             "- Be specific about what's being sought (skills, people, experiences, context, etc.)\n\n"
-
             "## Examples:\n"
             "Last: 'Who knows Rust?'\n"
             "Goal: 'Find people with Rust programming experience'\n\n"
-
             "Last: 'Does anyone have experience with Kubernetes in production?'\n"
             "Goal: 'Identify people with production Kubernetes deployment experience'\n\n"
-
             "Last: 'What does he think about this?'\n"
             "Goal: 'Find out what [resolve person from history] thinks about [resolve topic from history]'\n\n"
-
             "Last: 'Tell me about the AI team members'\n"
             "Goal: 'Find people who work on or are associated with AI projects'\n\n"
-
             "Last: 'What about that person we discussed?'\n"
             "Goal: 'Retrieve information about [resolve reference from history]'\n\n"
-
             "Last: 'Thanks for the help!'\n"
             "Goal: 'Gather contextual information about recent conversation participants and their expertise'\n\n"
-
             "Last: 'Is it Friday yet?'\n"
             "Goal: 'Collect context about work schedules and weekly patterns discussed by participants'\n\n"
-
             "Last: 'I just deployed the new feature'\n"
             "Goal: 'Gather information about the person's deployment experience and related technical skills'\n\n"
-
             "Last: 'What are your favorite quotes by [person]?'\n"
             "Goal: 'Find notable quotes by [person]'\n\n"
-
             "Return ONLY the goal text (no JSON, no markdown, just the plain goal statement)."
         )
 
@@ -352,10 +339,10 @@ class LLMClient:
             return "Collect relevant context."
 
     async def extract_message_search_queries(
-            self,
-            messages: list[MessageModel],
-            *,
-            max_queries: int = 15,
+        self,
+        messages: list[MessageModel],
+        *,
+        max_queries: int = 15,
     ) -> list[str]:
         """Derive diverse search phrases for message retrieval from recent conversation."""
 
@@ -369,27 +356,25 @@ class LLMClient:
         history_messages = messages[-6:-1] if len(messages) > 1 else []
 
         last_message_text = f"{last_message.author_name}: {last_message.content}"
-        history_text = "\n".join(
-            f"{msg.author_name}: {msg.content}" for msg in history_messages
-        ) if history_messages else "(No previous messages)"
+        history_text = (
+            "\n".join(f"{msg.author_name}: {msg.content}" for msg in history_messages)
+            if history_messages
+            else "(No previous messages)"
+        )
 
         prompt = (
             "You assist with retrieving relevant historical Discord messages via semantic search.\n"
             "Your task: Generate diverse search queries based EXCLUSIVELY on the LAST MESSAGE below.\n"
             "Use the conversation history ONLY for context to understand references, but ALL queries must address the last message.\n\n"
-
             "## Previous Conversation (context only - for understanding references):\n"
             f"```\n{history_text}\n```\n\n"
-
             "## LAST MESSAGE (PRIMARY FOCUS - generate queries for THIS only):\n"
             f"```\n{last_message_text}\n```\n\n"
-
             "## Your Task:\n"
             "Generate search queries to find historical messages relevant to the LAST MESSAGE.\n"
             "Focus on distinct perspectives: core topic, sub-topics, follow-up actions, stakeholders, artifacts, locations, timelines, and synonyms.\n"
             "Produce a mix of lengths: include some concise 1-3 word keywords, some medium phrases (4-8 words), and several fuller descriptive sentences up to 20 words.\n"
             "Avoid filler like 'search for' and keep every query grounded in the LAST MESSAGE's context.\n\n"
-
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
@@ -426,12 +411,12 @@ class LLMClient:
         return cleaned
 
     async def extract_fact_search_queries(
-            self,
-            messages: list[MessageModel],
-            *,
-            max_queries: int = 15,
-            previous_queries: list[str] | None = None,
-            retrieved_facts: list[RetrievedFact] | None = None,
+        self,
+        messages: list[MessageModel],
+        *,
+        max_queries: int = 15,
+        previous_queries: list[str] | None = None,
+        retrieved_facts: list[RetrievedFact] | None = None,
     ) -> list[str]:
         """Derive diverse search queries for fact retrieval from recent conversation.
 
@@ -452,9 +437,11 @@ class LLMClient:
         history_messages = messages[-6:-1] if len(messages) > 1 else []
 
         last_message_text = f"{last_message.author_name}: {last_message.content}"
-        history_text = "\n".join(
-            f"{msg.author_name}: {msg.content}" for msg in history_messages
-        ) if history_messages else "(No previous messages)"
+        history_text = (
+            "\n".join(f"{msg.author_name}: {msg.content}" for msg in history_messages)
+            if history_messages
+            else "(No previous messages)"
+        )
 
         # Build context about previous attempts for iterative refinement
         tried_context = ""
@@ -479,20 +466,15 @@ class LLMClient:
             "You assist with retrieving relevant facts about people via semantic search.\n"
             "Your task: Generate diverse search queries based EXCLUSIVELY on the LAST MESSAGE below.\n"
             "Use the conversation history ONLY for context to understand references, but ALL queries must address the last message.\n\n"
-
             "## Previous Conversation (context only - for understanding references):\n"
             f"```\n{history_text}\n```\n\n"
-
             "## LAST MESSAGE (PRIMARY FOCUS - generate queries for THIS only):\n"
             f"```\n{last_message_text}\n```\n\n"
-
             f"{tried_context}"
             f"{found_context}"
-
             "## Your Task:\n"
             "Generate 15-20 search queries that find facts relevant to answering or addressing the LAST MESSAGE.\n"
             "Facts include: employment, skills, education, relationships, interests, preferences, locations, and experiences.\n\n"
-
             "## CRITICAL: Generate queries from MULTIPLE ANGLES:\n"
             "1. **Direct keywords** from the LAST MESSAGE\n"
             "2. **Synonyms and related terms** (e.g., 'startup' → 'founder', 'entrepreneur', 'early-stage company')\n"
@@ -504,7 +486,6 @@ class LLMClient:
             "8. **Technologies and tools** (specific versions, alternatives, competitors)\n"
             "9. **Domain areas** (industries, fields, specializations)\n"
             "10. **People mentioned** in the LAST MESSAGE by name or reference\n\n"
-
             "## IMPORTANT RULES:\n"
             "- ALL queries must be relevant to the LAST MESSAGE specifically\n"
             "- Generate 15-20 queries to maximize coverage\n"
@@ -516,7 +497,6 @@ class LLMClient:
             "- If the last message references something from earlier (e.g., 'that project', 'the company we discussed'), use the history to understand WHAT is being referenced, then query for that thing\n"
             "- DO NOT repeat or rephrase any previously tried queries listed above\n"
             "- Search for DIFFERENT angles than what's already been found\n\n"
-
             "Return JSON only in this format:\n"
             "{\n"
             '  "queries": ["keyword or phrase", "..."]\n'
@@ -631,7 +611,6 @@ class LLMClient:
             f"## Iteration\n{current_iteration}/{max_iterations}\n\n"
             f"## Retrieved Facts ({len(retrieved_facts)} total)\n{facts_summary}\n\n"
             f"## Tool History\n{tool_history}\n\n"
-
             "## Decision Criteria\n"
             "**Continue searching IFF:**\n"
             "- Fewer than 5 iterations completed (need more exploration)\n"
@@ -639,13 +618,11 @@ class LLMClient:
             "- The goal asks about multiple aspects and we've only covered some\n"
             "- Facts seem incomplete or partial\n"
             "- Different search terms might reveal more relevant information\n\n"
-
             "**Stop searching if:**\n"
             "- We've tried 10+ iterations with diminishing returns\n"
             "- Last 3 tool calls returned 0 results\n"
             "- Retrieved facts comprehensively address all aspects of the goal\n"
             "- We've exhausted different search strategies\n\n"
-
             "## Output Format\n"
             "{\n"
             '  "should_continue": true,\n'
@@ -653,7 +630,6 @@ class LLMClient:
             '  "reasoning": "Explain why we should continue/stop",\n'
             '  "recommendations": ["suggest next search strategies if continuing"]\n'
             "}\n\n"
-
             "Be CONSERVATIVE about stopping - err on the side of searching more.\n"
             "Respond with JSON only."
         )
@@ -772,12 +748,12 @@ class LLMClient:
         valid_values: dict[str, Sequence[Any]] | None = None,
     ) -> tuple[bool, str]:
         valid_values = valid_values or {}
-        for field in required_fields:
-            if field not in response:
-                return False, f"Missing required field: {field}"
-        for field, allowed in valid_values.items():
-            if field in response and response[field] not in allowed:
-                return False, f"Invalid value for {field}: {response[field]}"
+        for required_field in required_fields:
+            if required_field not in response:
+                return False, f"Missing required field: {required_field}"
+        for field_name, allowed in valid_values.items():
+            if field_name in response and response[field_name] not in allowed:
+                return False, f"Invalid value for {field_name}: {response[field_name]}"
         return True, ""
 
     def _build_tool_selection_prompt(

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Dict, Mapping, Sequence
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -36,9 +36,7 @@ class EmbeddingSimilarityDetector:
 
     def _ensure_model(self) -> SentenceTransformer:
         if self._model is None:
-            logger.info(
-                "Loading sentence-transformer model '%s'", self._config.model_name
-            )
+            logger.info("Loading sentence-transformer model '%s'", self._config.model_name)
             self._model = SentenceTransformer(
                 self._config.model_name,
                 trust_remote_code=True,
@@ -66,7 +64,7 @@ class EmbeddingSimilarityDetector:
         similarity_matrix = normalized @ normalized.T
 
         ids = [fact.id for fact in facts]
-        pairs: Dict[tuple[int, int], float] = {}
+        pairs: dict[tuple[int, int], float] = {}
         max_neighbors = max(1, self._config.max_neighbors)
 
         for i in range(len(ids)):

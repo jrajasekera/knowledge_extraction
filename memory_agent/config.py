@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 
 from constants import DEFAULT_EMBEDDING_MODEL
 
-
 # Load environment variables from a .env file if present.
 load_dotenv()
 
@@ -138,7 +137,7 @@ class Settings:
         return stripped or None
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         """Load configuration values from the environment."""
         neo4j = Neo4jConfig(
             uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
@@ -187,10 +186,9 @@ class Settings:
         message_embeddings = MessageEmbeddingConfig(
             model=message_model,
             device=message_device,
-            cache_dir=
-                Path(message_cache_raw).expanduser()
-                if message_cache_raw
-                else embeddings.cache_dir,
+            cache_dir=Path(message_cache_raw).expanduser()
+            if message_cache_raw
+            else embeddings.cache_dir,
             batch_size=int(os.getenv("MESSAGE_EMBEDDING_BATCH_SIZE", str(default_message_batch))),
         )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,6 @@ if str(Path(__file__).resolve().parents[1]) not in sys.path:
 from db_utils import get_sqlite_connection
 
 from .models import RetrievalRequest, RetrievalResponse
-
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +49,7 @@ class RequestLogger:
             client_ip: Optional client IP address.
         """
         try:
-            requested_at = datetime.now(timezone.utc).isoformat()
+            requested_at = datetime.now(UTC).isoformat()
             request_payload = json.dumps(request_body.model_dump(mode="json"), ensure_ascii=False)
 
             # Extract query from the last message
@@ -83,7 +82,7 @@ class RequestLogger:
             duration_ms: Request duration in milliseconds.
         """
         try:
-            completed_at = datetime.now(timezone.utc).isoformat()
+            completed_at = datetime.now(UTC).isoformat()
             response_payload = json.dumps(response.model_dump(mode="json"), ensure_ascii=False)
             facts_returned = len(response.facts)
             confidence = self._extract_confidence_value(response.confidence)
@@ -100,7 +99,15 @@ class RequestLogger:
                         confidence = ?
                     WHERE id = ?
                     """,
-                    (completed_at, duration_ms, 200, response_payload, facts_returned, confidence, request_id),
+                    (
+                        completed_at,
+                        duration_ms,
+                        200,
+                        response_payload,
+                        facts_returned,
+                        confidence,
+                        request_id,
+                    ),
                 )
                 conn.commit()
         except Exception as exc:  # noqa: BLE001
@@ -122,7 +129,7 @@ class RequestLogger:
             duration_ms: Request duration in milliseconds.
         """
         try:
-            completed_at = datetime.now(timezone.utc).isoformat()
+            completed_at = datetime.now(UTC).isoformat()
 
             with self._get_connection() as conn:
                 conn.execute(

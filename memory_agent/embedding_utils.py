@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterator, Sequence, TypeVar
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 
-T = TypeVar("T")
-
-
-def chunk_iterable(values: Sequence[T], size: int) -> Iterator[Sequence[T]]:
+def chunk_iterable[T](values: Sequence[T], size: int) -> Iterator[Sequence[T]]:
     """Yield successive chunks from the sequence."""
 
     if size <= 0:

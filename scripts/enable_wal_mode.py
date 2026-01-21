@@ -43,7 +43,7 @@ def enable_wal_mode(db_path: Path) -> None:
 
     # Configure additional settings for better concurrency
     cursor.execute("PRAGMA synchronous=NORMAL;")  # Faster writes while still safe in WAL mode
-    cursor.execute("PRAGMA busy_timeout=5000;")    # Wait up to 5 seconds when database is busy
+    cursor.execute("PRAGMA busy_timeout=5000;")  # Wait up to 5 seconds when database is busy
     cursor.execute("PRAGMA wal_autocheckpoint=1000;")  # Checkpoint every 1000 pages
 
     # Verify settings
@@ -54,7 +54,7 @@ def enable_wal_mode(db_path: Path) -> None:
     cursor.execute("PRAGMA busy_timeout;")
     busy_timeout = cursor.fetchone()[0]
 
-    print(f"\nFinal configuration:")
+    print("\nFinal configuration:")
     print(f"  journal_mode: {journal_mode}")
     print(f"  synchronous: {synchronous}")
     print(f"  busy_timeout: {busy_timeout}ms")

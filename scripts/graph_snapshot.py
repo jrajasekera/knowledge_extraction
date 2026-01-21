@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from typing import Iterable, Mapping, Sequence
 import statistics
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 
 from neo4j import GraphDatabase
-
 
 DEFAULT_NODE_LABELS: tuple[str, ...] = (
     "Person",
@@ -106,7 +105,9 @@ def _format_table(items: Iterable[Mapping[str, object]]) -> str:
             widths[idx] = max(widths[idx], len(str(row.get(header, ""))))
 
     def render_row(values: Sequence[object]) -> str:
-        return "  " + "  |  ".join(str(value).ljust(widths[idx]) for idx, value in enumerate(values))
+        return "  " + "  |  ".join(
+            str(value).ljust(widths[idx]) for idx, value in enumerate(values)
+        )
 
     header_line = render_row(headers)
     separator = "  " + "--+-".join("-" * width for width in widths)
@@ -130,7 +131,9 @@ def fetch_existing_relationship_types(session) -> set[str]:
         return {record["name"] for record in result if record.get("name")}
     except Exception:
         result = session.run("CALL db.relationshipTypes()")
-        return {record.get("relationshipType") for record in result if record.get("relationshipType")}
+        return {
+            record.get("relationshipType") for record in result if record.get("relationshipType")
+        }
 
 
 def node_counts(session, labels: Sequence[str]) -> Mapping[str, int]:
@@ -154,7 +157,9 @@ def relationship_counts(session, *, limit: int = 25) -> list[Mapping[str, object
     return [record.data() for record in result]
 
 
-def sample_relationships(session, *, per_type_limit: int, available_types: set[str]) -> Mapping[str, list[Mapping[str, object]]]:
+def sample_relationships(
+    session, *, per_type_limit: int, available_types: set[str]
+) -> Mapping[str, list[Mapping[str, object]]]:
     samples: dict[str, list[Mapping[str, object]]] = {}
     for rel_type, query in SAMPLE_QUERIES.items():
         if rel_type not in available_types:
@@ -166,7 +171,9 @@ def sample_relationships(session, *, per_type_limit: int, available_types: set[s
     return samples
 
 
-def facts_temporal_breakdown(session) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
+def facts_temporal_breakdown(
+    session,
+) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
     month_result = session.run(
         """
         MATCH ()-[r]->()
@@ -297,9 +304,7 @@ def run_snapshot(
                 print(_format_table(month_table))
                 spikes, avg, std, threshold = _detect_spikes(month_rows, "fact_count")
                 if spikes:
-                    print(
-                        f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):"
-                    )
+                    print(f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):")
                     for row in spikes:
                         print(f"    - {row['month']}: {row['fact_count']} facts")
             else:
@@ -317,18 +322,12 @@ def run_snapshot(
                 print(_format_table(quarter_table))
                 spikes, avg, std, threshold = _detect_spikes(quarter_rows, "fact_count")
                 if spikes:
-                    print(
-                        f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):"
-                    )
+                    print(f"  Spikes (avg={avg:.1f}, std={std:.1f}, threshold≈{threshold:.1f}):")
                     for row in spikes:
-                        print(
-                            f"    - Q{row['quarter']} {row['year']}: {row['fact_count']} facts"
-                        )
+                        print(f"    - Q{row['quarter']} {row['year']}: {row['fact_count']} facts")
 
             print("\n=== Member Message Volume ===")
-            message_series = weekly_message_series(
-                session, member_limit=message_member_limit
-            )
+            message_series = weekly_message_series(session, member_limit=message_member_limit)
             if not message_series:
                 print("  (no messages)")
             else:
@@ -337,9 +336,7 @@ def run_snapshot(
                 for series in message_series:
                     week_count = len(series.weekly_counts)
                     avg_per_week = (
-                        series.total_messages / week_count
-                        if week_count
-                        else series.total_messages
+                        series.total_messages / week_count if week_count else series.total_messages
                     )
                     summary_rows.append(
                         {
@@ -359,11 +356,7 @@ def run_snapshot(
 
                 members = [row["member"] for row in summary_rows]
                 all_weeks = sorted(
-                    {
-                        week
-                        for counts in member_week_counts.values()
-                        for week in counts.keys()
-                    },
+                    {week for counts in member_week_counts.values() for week in counts},
                     key=lambda label: (
                         int(label.split("-W")[0]),
                         int(label.split("-W")[1]),

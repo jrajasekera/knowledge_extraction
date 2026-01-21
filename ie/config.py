@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Mapping, Sequence
+from typing import Literal
 
 from .types import FactAttribute, FactDefinition, FactType, build_fact_definition_index
-
 
 IE_CACHE_VERSION = "v1"
 
@@ -52,9 +52,7 @@ FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
         subject_description="Discord member with ties to another member",
         object_type="Person",
         object_description="Second member who is closely connected",
-        attributes=(
-            FactAttribute("closeness_basis", "Evidence summary for why they are close"),
-        ),
+        attributes=(FactAttribute("closeness_basis", "Evidence summary for why they are close"),),
         rationale="Augments interaction-based weights with explicit relationship assertions.",
     ),
     FactDefinition(
@@ -78,7 +76,9 @@ FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
         object_description="Skill, technology, or domain the member is capable with",
         attributes=(
             FactAttribute("skill", "Canonical skill name", required=True),
-            FactAttribute("proficiency_level", "Self-reported level (beginner/intermediate/expert)"),
+            FactAttribute(
+                "proficiency_level", "Self-reported level (beginner/intermediate/expert)"
+            ),
             FactAttribute("years_experience", "Approximate years practicing the skill"),
             FactAttribute("learning_status", "learning/expert/rusty"),
         ),
@@ -105,7 +105,9 @@ FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
         object_description="The related individual (Discord member or external person)",
         attributes=(
             FactAttribute("relationship_type", "sibling/parent/spouse/partner/etc", required=True),
-            FactAttribute("relationship_basis", "Brief description or evidence of the relationship"),
+            FactAttribute(
+                "relationship_basis", "Brief description or evidence of the relationship"
+            ),
         ),
         rationale="Surface family and personal ties beyond interaction weights.",
     ),
@@ -169,7 +171,9 @@ FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
         object_type="HistoricalFact",
         object_description="Organization, location, or role previously associated with the member",
         attributes=(
-            FactAttribute("fact_type", "Referenced fact type (worked_at/lived_in/etc)", required=True),
+            FactAttribute(
+                "fact_type", "Referenced fact type (worked_at/lived_in/etc)", required=True
+            ),
             FactAttribute("object_label", "Human-readable target of the past fact", required=True),
             FactAttribute("start_date", "When it began"),
             FactAttribute("end_date", "When it ended"),
@@ -296,7 +300,9 @@ FACT_DEFINITIONS: tuple[FactDefinition, ...] = (
 )
 
 
-FACT_DEFINITION_INDEX: Mapping[FactType, FactDefinition] = build_fact_definition_index(FACT_DEFINITIONS)
+FACT_DEFINITION_INDEX: Mapping[FactType, FactDefinition] = build_fact_definition_index(
+    FACT_DEFINITIONS
+)
 
 DEFAULT_FACT_TYPES: tuple[FactType, ...] = tuple(definition.type for definition in FACT_DEFINITIONS)
 
@@ -310,7 +316,7 @@ class IEConfig:
     max_concurrent_requests: int = 1
     prompt_version: Literal["legacy", "enhanced"] = "enhanced"
 
-    def validate(self) -> "IEConfig":
+    def validate(self) -> IEConfig:
         if self.window_size < 1:
             raise ValueError("window_size must be >= 1")
         if not 0.0 <= self.confidence_threshold <= 1.0:

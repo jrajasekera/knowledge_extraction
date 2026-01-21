@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from .display import ProgressDisplay
 
@@ -54,11 +54,11 @@ class ProgressLoggingManager:
         self._logger = logger or logging.getLogger()
         self._original_handlers: list[logging.Handler] | None = None
 
-    def __enter__(self) -> "ProgressLoggingManager":
+    def __enter__(self) -> ProgressLoggingManager:
         if not self._progress.requires_log_cooperation:
             return self
         original = list(self._logger.handlers)
-        wrapped: List[logging.Handler] = []
+        wrapped: list[logging.Handler] = []
         for handler in original:
             wrapped_handler = ProgressAwareHandler(handler, self._progress)
             wrapped_handler.setLevel(handler.level)

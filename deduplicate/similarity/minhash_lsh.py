@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Dict, Mapping, Sequence
 
 from datasketch import MinHash, MinHashLSH
 
@@ -37,7 +37,7 @@ class MinHashLSHDetector:
             threshold=self._config.threshold,
             num_perm=self._config.num_perm,
         )
-        signatures: Dict[int, MinHash] = {}
+        signatures: dict[int, MinHash] = {}
 
         for fact in facts:
             text = self._extract_text(fact)
@@ -51,7 +51,7 @@ class MinHashLSHDetector:
         if not signatures:
             return []
 
-        pairs: Dict[tuple[int, int], float] = {}
+        pairs: dict[tuple[int, int], float] = {}
         for fact_id, signature in signatures.items():
             for candidate_key in lsh.query(signature):
                 candidate_id = int(candidate_key)
@@ -84,7 +84,7 @@ class MinHashLSHDetector:
                 if text:
                     parts.append(text)
         else:
-            for name, value in sorted(fact.attributes.items()):
+            for _name, value in sorted(fact.attributes.items()):
                 if value is None:
                     continue
                 text = str(value).strip()

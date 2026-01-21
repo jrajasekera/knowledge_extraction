@@ -169,7 +169,9 @@ async def generate_context_summary(
 
             # Log empty response and retry if attempts remain
             if attempt < max_retries:
-                logger.warning("LLM returned empty response on attempt %d, retrying...", attempt + 1)
+                logger.warning(
+                    "LLM returned empty response on attempt %d, retrying...", attempt + 1
+                )
             else:
                 logger.warning("LLM returned empty response after %d attempts", max_retries + 1)
 

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
 from memory_agent.agent import MemoryAgent, _estimate_recursion_limit
 from memory_agent.config import AgentConfig
 from memory_agent.models import MessageModel, RetrievalRequest
-from memory_agent.tools import ToolContext, build_toolkit
 
 
 class DummySession:
@@ -50,7 +49,7 @@ async def test_memory_agent_sets_recursion_limit(monkeypatch):
         author_id="user2",
         author_name="Eve",
         content="Ping",
-        timestamp=datetime.now(tz=timezone.utc),
+        timestamp=datetime.now(tz=UTC),
         message_id="msg_2",
     )
 

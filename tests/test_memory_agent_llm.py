@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import BaseModel
@@ -89,7 +89,7 @@ async def test_extract_message_search_queries_parses_llm_response():
             author_id="1",
             author_name="Alice",
             content="Can we summarize the deployment blockers for the roadmap?",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
     ]
 
@@ -108,7 +108,7 @@ async def test_extract_message_search_queries_returns_empty_when_unavailable():
             author_id="2",
             author_name="Bob",
             content="Need context on the metrics discussion",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
     ]
 

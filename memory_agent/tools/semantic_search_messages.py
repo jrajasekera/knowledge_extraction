@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,7 +23,6 @@ from .semantic_search import (
 )
 from .utils import run_keyword_query, run_vector_query
 
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_VECTOR_INDEX = "message_embeddings"
@@ -33,7 +32,9 @@ DEFAULT_FUSION_METHOD: Literal["rrf", "score_sum", "score_max"] = "rrf"
 DEFAULT_MULTI_QUERY_BOOST = 0.0
 RRF_K = 60
 BLACKLIST_ENV_VAR = "SEMANTIC_MESSAGE_BLACKLIST_PATH"
-_DEFAULT_BLACKLIST_PATH = Path(__file__).resolve().parent.parent / "assets" / "semantic_message_blacklist.json"
+_DEFAULT_BLACKLIST_PATH = (
+    Path(__file__).resolve().parent.parent / "assets" / "semantic_message_blacklist.json"
+)
 
 # Hybrid search: offset for keyword query indices to treat them as separate "voters" in RRF
 KEYWORD_QUERY_OFFSET = 1000
@@ -96,7 +97,9 @@ class MessageOccurrence:
     query_scores: dict[int, float] = field(default_factory=dict)
     query_ranks: dict[int, int] = field(default_factory=dict)
 
-    def add_observation(self, query_idx: int, score: float, rank: int, properties: dict[str, Any]) -> None:
+    def add_observation(
+        self, query_idx: int, score: float, rank: int, properties: dict[str, Any]
+    ) -> None:
         """Record an observation for this message from a specific query."""
 
         existing_score = self.query_scores.get(query_idx)
@@ -169,18 +172,20 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         cleaned = value.replace("Z", "+00:00") if "Z" in value else value
         try:
             parsed = datetime.fromisoformat(cleaned)
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
             return None
     return None
 
 
-def _build_permalink(guild_id: str | None, channel_id: str | None, message_id: str | None) -> str | None:
+def _build_permalink(
+    guild_id: str | None, channel_id: str | None, message_id: str | None
+) -> str | None:
     if not (guild_id and channel_id and message_id):
         return None
     return f"https://discord.com/channels/{guild_id}/{channel_id}/{message_id}"
@@ -210,7 +215,9 @@ def _safe_excerpt(text: str | None) -> str | None:
     return stripped[: MAX_EXCERPT_LENGTH - 3].rstrip() + "..."
 
 
-class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticSearchMessagesOutput]):
+class SemanticSearchMessagesTool(
+    ToolBase[SemanticSearchMessagesInput, SemanticSearchMessagesOutput]
+):
     """Return the most similar Discord messages for a free-text query."""
 
     input_model = SemanticSearchMessagesInput
@@ -266,7 +273,9 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                         filters,
                         include_evidence=False,
                     )
-                    logger.info("Query %d vector search returned %d results", query_idx, len(vector_rows))
+                    logger.info(
+                        "Query %d vector search returned %d results", query_idx, len(vector_rows)
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Query %d vector search failed: %s", query_idx, exc)
             else:
@@ -280,7 +289,9 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                     per_query_limit,
                     index_name="message_fulltext",
                 )
-                logger.info("Query %d keyword search returned %d results", query_idx, len(keyword_rows))
+                logger.info(
+                    "Query %d keyword search returned %d results", query_idx, len(keyword_rows)
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Query %d keyword search failed: %s", query_idx, exc)
 
@@ -305,14 +316,20 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
 
                     node = row.get("node")
                     if not node:
-                        logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
+                        logger.debug(
+                            "Query %d (%s): Skipping row with missing node", query_idx, source_type
+                        )
                         continue
 
                     properties = dict(node)
                     timestamp_str = properties.get("timestamp")
                     timestamp_dt = _parse_timestamp(timestamp_str)
 
-                    normalized_content = (properties.get("clean_content") or properties.get("content") or "").strip().lower()
+                    normalized_content = (
+                        (properties.get("clean_content") or properties.get("content") or "")
+                        .strip()
+                        .lower()
+                    )
                     if normalized_content in BLACKLISTED_CONTENT:
                         logger.debug(
                             "Query %d (%s): Skipped blacklisted content '%s' for message_id=%s",
@@ -369,10 +386,13 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         best_occurrences: dict[str, MessageOccurrence] = {}
         best_threshold = current_threshold
 
-        max_iterations = int(
-            (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
-            / ADAPTIVE_THRESHOLD_STEP
-        ) + 1
+        max_iterations = (
+            int(
+                (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
+                / ADAPTIVE_THRESHOLD_STEP
+            )
+            + 1
+        )
 
         search_limit = int(
             max(
@@ -382,7 +402,9 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         )
 
         iterations = 0
-        while current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations:
+        while (
+            current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations
+        ):
             iterations += 1
 
             logger.info(
@@ -486,7 +508,11 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
                 filters=filters,
             )
         else:
-            threshold = input_data.similarity_threshold if input_data.similarity_threshold is not None else 0.6
+            threshold = (
+                input_data.similarity_threshold
+                if input_data.similarity_threshold is not None
+                else 0.6
+            )
             occurrences = self._execute_search_pass(
                 input_data,
                 threshold,
@@ -522,9 +548,11 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         duplicates_filtered = 0
 
         for result in ordered:
-            if self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True):
-                if len(limited) >= input_data.limit:
-                    break
+            if (
+                self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True)
+                and len(limited) >= input_data.limit
+            ):
+                break
             else:
                 duplicates_filtered += 1
 
@@ -535,9 +563,11 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
             for result in ordered:
                 if result in limited:
                     continue
-                if self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True):
-                    if len(limited) >= input_data.limit:
-                        break
+                if (
+                    self._try_append_result(result, limited, seen_dedupe_keys, enforce_unique=True)
+                    and len(limited) >= input_data.limit
+                ):
+                    break
 
         duplicates_reintroduced = 0
         if len(limited) < input_data.limit:
@@ -566,11 +596,13 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         if value is None:
             return None
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     @staticmethod
-    def _calculate_combined_score(occurrence: MessageOccurrence, fusion_method: str, multi_query_boost: float) -> float:
+    def _calculate_combined_score(
+        occurrence: MessageOccurrence, fusion_method: str, multi_query_boost: float
+    ) -> float:
         if not occurrence.query_scores:
             return occurrence.best_score
 
@@ -598,11 +630,15 @@ class SemanticSearchMessagesTool(ToolBase[SemanticSearchMessagesInput, SemanticS
         attachments = _load_json_list(properties.get("attachments"))
         reactions = _load_json_list(properties.get("reactions"))
         mentions = [str(value) for value in properties.get("mentions", []) if value is not None]
-        mention_names = [str(value) for value in properties.get("mention_names", []) if value is not None]
+        mention_names = [
+            str(value) for value in properties.get("mention_names", []) if value is not None
+        ]
         clean_content = properties.get("clean_content") or ""
         content = properties.get("content") or ""
         excerpt = _safe_excerpt(clean_content or content)
-        permalink = _build_permalink(properties.get("guild_id"), properties.get("channel_id"), properties.get("message_id"))
+        permalink = _build_permalink(
+            properties.get("guild_id"), properties.get("channel_id"), properties.get("message_id")
+        )
         appeared_in_query_count = len(query_scores) if query_scores else None
         return SemanticSearchMessageResult(
             message_id=str(properties.get("message_id")),

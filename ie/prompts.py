@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from .config import FACT_DEFINITION_INDEX
 from .types import FactDefinition, FactType

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 
 @dataclass(slots=True)
@@ -16,10 +20,10 @@ class EmbeddingProvider:
     cache_dir: Path | None = None
     normalize: bool = True
 
-    _model: "SentenceTransformer | None" = None  # type: ignore[name-defined]
+    _model: SentenceTransformer | None = None
 
     @property
-    def model(self) -> "SentenceTransformer":  # type: ignore[name-defined]
+    def model(self) -> SentenceTransformer:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 

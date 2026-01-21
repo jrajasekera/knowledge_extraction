@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable, Mapping
 
 
 class FactType(str, Enum):
@@ -50,7 +50,9 @@ class FactDefinition:
         return tuple(attr.name for attr in self.attributes)
 
 
-def build_fact_definition_index(definitions: Iterable[FactDefinition]) -> Mapping[FactType, FactDefinition]:
+def build_fact_definition_index(
+    definitions: Iterable[FactDefinition],
+) -> Mapping[FactType, FactDefinition]:
     definition_list = tuple(definitions)
     index = {definition.type: definition for definition in definition_list}
     if len(index) != len(definition_list):

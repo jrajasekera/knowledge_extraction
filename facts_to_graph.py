@@ -6,15 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from neo4j import GraphDatabase
 
+from data_structures.ingestion import normalize_iso_timestamp
 from db_utils import get_sqlite_connection
 from ie.types import FactType
-from data_structures.ingestion import normalize_iso_timestamp
 
 
 @dataclass(slots=True)
@@ -1035,9 +1036,7 @@ def materialize_facts(
     if processed == 0:
         print("[facts_to_graph] No facts ready for materialization.")
     else:
-        print(
-            f"[facts_to_graph] Materialized {processed} facts (min_confidence={min_confidence})."
-        )
+        print(f"[facts_to_graph] Materialized {processed} facts (min_confidence={min_confidence}).")
 
     if missing_handlers:
         missing_names = ", ".join(sorted(ft.value for ft in missing_handlers))
@@ -1048,11 +1047,15 @@ def materialize_facts(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Materialize SQLite facts into Neo4j.")
-    parser.add_argument("--sqlite", type=Path, default=Path("./discord.db"), help="Path to SQLite DB.")
+    parser.add_argument(
+        "--sqlite", type=Path, default=Path("./discord.db"), help="Path to SQLite DB."
+    )
     parser.add_argument("--neo4j", default="bolt://localhost:7687", help="Neo4j bolt URI.")
     parser.add_argument("--user", default="neo4j", help="Neo4j username.")
     parser.add_argument("--password", required=True, help="Neo4j password.")
-    parser.add_argument("--min-confidence", type=float, default=0.5, help="Minimum confidence filter.")
+    parser.add_argument(
+        "--min-confidence", type=float, default=0.5, help="Minimum confidence filter."
+    )
     parser.add_argument(
         "--fact-types",
         nargs="*",
@@ -1063,11 +1066,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    fact_types = (
-        tuple(FactType(value) for value in args.fact_types)
-        if args.fact_types
-        else None
-    )
+    fact_types = tuple(FactType(value) for value in args.fact_types) if args.fact_types else None
     materialize_facts(
         args.sqlite,
         neo4j_uri=args.neo4j,

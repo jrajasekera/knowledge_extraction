@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ie.types import FactType
 
@@ -193,19 +193,16 @@ class DeduplicationProgress:
             """,
             (run_id,),
         ).fetchall()
-        return {
-            (FactType(row["fact_type"]), str(row["subject_id"]))
-            for row in rows
-        }
+        return {(FactType(row["fact_type"]), str(row["subject_id"])) for row in rows}
 
 
 def _coerce_utc_datetime(value: str | None) -> datetime:
     if not value:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         parsed = datetime.fromisoformat(str(value))
     except ValueError:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

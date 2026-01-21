@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Sequence
 
 from ie.config import FACT_DEFINITION_INDEX
 from ie.types import FactDefinition, FactType
@@ -310,7 +310,12 @@ ATTRIBUTE_PRIORITIES: dict[FactType, AttributePriority] = {
 CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
     FactCategory.TEMPORAL_EMPLOYMENT: CategoryTemplate(
         name=FactCategory.TEMPORAL_EMPLOYMENT,
-        fact_types=(FactType.WORKS_AT, FactType.STUDIED_AT, FactType.WORKING_ON, FactType.PREVIOUSLY),
+        fact_types=(
+            FactType.WORKS_AT,
+            FactType.STUDIED_AT,
+            FactType.WORKING_ON,
+            FactType.PREVIOUSLY,
+        ),
         merge_philosophy=(
             "Employment, education, and project facts are highly temporal. Distinct time periods represent"
             " separate canonical facts. Only merge when the same position/program spans the same timeframe."
@@ -347,15 +352,19 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         fact_type_guidance={
             FactType.WORKS_AT: (
                 "WORKS_AT: Keep separate entries for distinct employment periods. Merge only when describing the same stint"
-                " with overlapping dates and compatible roles."),
+                " with overlapping dates and compatible roles."
+            ),
             FactType.STUDIED_AT: (
                 "STUDIED_AT: Do not merge different programs, campuses, or degree types even at the same institution."
-                " Merge only when enrollment period and program details align."),
+                " Merge only when enrollment period and program details align."
+            ),
             FactType.WORKING_ON: (
                 "WORKING_ON: Separate projects when scope or collaborators differ. Merge when describing the same project"
-                " with complementary attributes (role, timeframe, format)."),
+                " with complementary attributes (role, timeframe, format)."
+            ),
             FactType.PREVIOUSLY: (
-                "PREVIOUSLY: Use to capture historical states. Merge only when evidence clearly references the same past event."),
+                "PREVIOUSLY: Use to capture historical states. Merge only when evidence clearly references the same past event."
+            ),
         },
     ),
     FactCategory.TEMPORAL_LOCATION: CategoryTemplate(
@@ -390,14 +399,22 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         ),
         fact_type_guidance={
             FactType.LIVES_IN: (
-                "LIVES_IN: Merge only when describing the same living situation. Moves or relocations at different times stay separate."),
+                "LIVES_IN: Merge only when describing the same living situation. Moves or relocations at different times stay separate."
+            ),
             FactType.EXPERIENCED: (
-                "EXPERIENCED: Treat different phases (e.g., planning, during, after) as distinct unless evidence shows they describe the same stage."),
+                "EXPERIENCED: Treat different phases (e.g., planning, during, after) as distinct unless evidence shows they describe the same stage."
+            ),
         },
     ),
     FactCategory.AGGREGABLE_TOPICS: CategoryTemplate(
         name=FactCategory.AGGREGABLE_TOPICS,
-        fact_types=(FactType.TALKS_ABOUT, FactType.CURIOUS_ABOUT, FactType.CARES_ABOUT, FactType.REMEMBERS, FactType.WITNESSED),
+        fact_types=(
+            FactType.TALKS_ABOUT,
+            FactType.CURIOUS_ABOUT,
+            FactType.CARES_ABOUT,
+            FactType.REMEMBERS,
+            FactType.WITNESSED,
+        ),
         merge_philosophy=(
             "Topic and interest facts are aggregation-friendly. Merge repeated mentions to show frequency while respecting sentiment conflicts."
         ),
@@ -427,15 +444,20 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         ),
         fact_type_guidance={
             FactType.TALKS_ABOUT: (
-                "TALKS_ABOUT: Merge mentions of the same normalized topic; combine evidence to reflect frequency."),
+                "TALKS_ABOUT: Merge mentions of the same normalized topic; combine evidence to reflect frequency."
+            ),
             FactType.CURIOUS_ABOUT: (
-                "CURIOUS_ABOUT: Merge when curiosity targets align; note learning stage or intent."),
+                "CURIOUS_ABOUT: Merge when curiosity targets align; note learning stage or intent."
+            ),
             FactType.CARES_ABOUT: (
-                "CARES_ABOUT: Merge values aligned around the same cause; explain intensity if provided."),
+                "CARES_ABOUT: Merge values aligned around the same cause; explain intensity if provided."
+            ),
             FactType.REMEMBERS: (
-                "REMEMBERS: Distinguish between separate memories. Merge only when they refer to the same recalled event."),
+                "REMEMBERS: Distinguish between separate memories. Merge only when they refer to the same recalled event."
+            ),
             FactType.WITNESSED: (
-                "WITNESSED: Merge reports of the same incident; split distinct events even if related."),
+                "WITNESSED: Merge reports of the same incident; split distinct events even if related."
+            ),
         },
     ),
     FactCategory.STABLE_SKILLS: CategoryTemplate(
@@ -470,9 +492,11 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         ),
         fact_type_guidance={
             FactType.HAS_SKILL: (
-                "HAS_SKILL: Keep separate when proficiency level or years of experience conflict. Merge complementary skill details when levels align."),
+                "HAS_SKILL: Keep separate when proficiency level or years of experience conflict. Merge complementary skill details when levels align."
+            ),
             FactType.BELIEVES: (
-                "BELIEVES: Merge only when statements express the same stance. Capture nuances (e.g., qualifiers) in attributes or reasoning."),
+                "BELIEVES: Merge only when statements express the same stance. Capture nuances (e.g., qualifiers) in attributes or reasoning."
+            ),
         },
     ),
     FactCategory.PREFERENCE_SENTIMENT: CategoryTemplate(
@@ -492,7 +516,7 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         default_merge_strategy="moderate",
         attribute_normalization_rules={
             "target": "Normalize product/place names; preserve most specific variant.",
-            "sentiment": "Respect polarity; do not merge positive with negative." ,
+            "sentiment": "Respect polarity; do not merge positive with negative.",
         },
         identical_confidence_rule="Use max confidence when subject expresses the same stance toward the same target.",
         complementary_confidence_rule="Use weighted average +0.05 when facts add context (reason, strength, timeframe) without changing sentiment.",
@@ -514,17 +538,23 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         ),
         fact_type_guidance={
             FactType.PREFERS: (
-                "PREFERS: Merge endorsements of the same target when sentiment matches; differentiate intensity via attributes."),
+                "PREFERS: Merge endorsements of the same target when sentiment matches; differentiate intensity via attributes."
+            ),
             FactType.RECOMMENDS: (
-                "RECOMMENDS: Merge repeated recommendations for identical targets; preserve strongest context and reasoning."),
+                "RECOMMENDS: Merge repeated recommendations for identical targets; preserve strongest context and reasoning."
+            ),
             FactType.AVOIDS: (
-                "AVOIDS/DISLIKES: Keep separate from positive sentiments; merge only when avoidance reasons align."),
+                "AVOIDS/DISLIKES: Keep separate from positive sentiments; merge only when avoidance reasons align."
+            ),
             FactType.DISLIKES: (
-                "DISLIKES: Separate entries for distinct triggers; merge identical complaints."),
+                "DISLIKES: Separate entries for distinct triggers; merge identical complaints."
+            ),
             FactType.ENJOYS: (
-                "ENJOYS: Merge repeated enjoyment of same activity; summarize frequency in reasoning."),
+                "ENJOYS: Merge repeated enjoyment of same activity; summarize frequency in reasoning."
+            ),
             FactType.PLANS_TO: (
-                "PLANS_TO: Merge plans only when the goal and timeframe remain consistent; otherwise keep separate."),
+                "PLANS_TO: Merge plans only when the goal and timeframe remain consistent; otherwise keep separate."
+            ),
         },
     ),
     FactCategory.RELATIONSHIPS_EVENTS: CategoryTemplate(
@@ -559,11 +589,14 @@ CATEGORY_TEMPLATES: dict[FactCategory, CategoryTemplate] = {
         ),
         fact_type_guidance={
             FactType.CLOSE_TO: (
-                "CLOSE_TO: Verify the same counterpart person. Merge when evidence repeats the same relationship justification."),
+                "CLOSE_TO: Verify the same counterpart person. Merge when evidence repeats the same relationship justification."
+            ),
             FactType.RELATED_TO: (
-                "RELATED_TO: Relationship type must match; distinguish different family ties (e.g., cousin vs. sibling)."),
+                "RELATED_TO: Relationship type must match; distinguish different family ties (e.g., cousin vs. sibling)."
+            ),
             FactType.ATTENDED_EVENT: (
-                "ATTENDED_EVENT: Merge attendance reports when event name, date, and role align. Separate distinct dates or formats."),
+                "ATTENDED_EVENT: Merge attendance reports when event name, date, and role align. Separate distinct dates or formats."
+            ),
         },
     ),
 }
@@ -755,14 +788,14 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
             {
                 "fact_id": 61,
                 "object_label": "Open Source Bot",
-                    "attributes": {
-                        "project": "Open Source Bot",
-                        "collaboration_mode": "team",
-                        "project_type": "open-source",
-                        "start_date": "2024-04",
-                    },
-                    "confidence": 0.64,
-                    "evidence": ["m81"],
+                "attributes": {
+                    "project": "Open Source Bot",
+                    "collaboration_mode": "team",
+                    "project_type": "open-source",
+                    "start_date": "2024-04",
+                },
+                "confidence": 0.64,
+                "evidence": ["m81"],
             },
         ],
         expected_output={
@@ -1112,7 +1145,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
             {
                 "fact_id": 121,
                 "object_label": "Golang",
-                "attributes": {"skill": "Go", "years_experience": 3, "proficiency_level": "intermediate"},
+                "attributes": {
+                    "skill": "Go",
+                    "years_experience": 3,
+                    "proficiency_level": "intermediate",
+                },
                 "confidence": 0.62,
                 "evidence": ["m521"],
             },
@@ -1123,7 +1160,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
                     "type": "HAS_SKILL",
                     "subject_id": "user_42",
                     "object_label": "Go",
-                    "attributes": {"skill": "Go", "proficiency_level": "intermediate", "years_experience": 3},
+                    "attributes": {
+                        "skill": "Go",
+                        "proficiency_level": "intermediate",
+                        "years_experience": 3,
+                    },
                     "confidence": 0.69,
                     "evidence": ["m520", "m521"],
                     "merged_from": [120, 121],
@@ -1149,7 +1190,10 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
             {
                 "fact_id": 131,
                 "object_label": "Remote work works",
-                "attributes": {"belief": "Remote work is productive", "reason": "fewer interruptions"},
+                "attributes": {
+                    "belief": "Remote work is productive",
+                    "reason": "fewer interruptions",
+                },
                 "confidence": 0.57,
                 "evidence": ["m531"],
             },
@@ -1160,7 +1204,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
                     "type": "BELIEVES",
                     "subject_id": "user_42",
                     "object_label": "Remote work is productive",
-                    "attributes": {"belief": "Remote work is productive", "sentiment": "positive", "reason": "fewer interruptions"},
+                    "attributes": {
+                        "belief": "Remote work is productive",
+                        "sentiment": "positive",
+                        "reason": "fewer interruptions",
+                    },
                     "confidence": 0.63,
                     "evidence": ["m530", "m531"],
                     "merged_from": [130, 131],
@@ -1197,7 +1245,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
                     "type": "PREFERS",
                     "subject_id": "user_42",
                     "object_label": "Blue Bottle Coffee",
-                    "attributes": {"target": "Blue Bottle Coffee", "reason": "tastes smooth", "context": "morning routine"},
+                    "attributes": {
+                        "target": "Blue Bottle Coffee",
+                        "reason": "tastes smooth",
+                        "context": "morning routine",
+                    },
                     "confidence": 0.65,
                     "evidence": ["m600", "m601"],
                     "merged_from": [140, 141],
@@ -1263,7 +1315,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
             {
                 "fact_id": 144,
                 "object_label": "Run marathon",
-                "attributes": {"plan": "Run a marathon", "timeframe": "2025", "confidence_level": "medium"},
+                "attributes": {
+                    "plan": "Run a marathon",
+                    "timeframe": "2025",
+                    "confidence_level": "medium",
+                },
                 "confidence": 0.6,
                 "evidence": ["m604"],
             },
@@ -1281,7 +1337,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
                     "type": "PLANS_TO",
                     "subject_id": "user_42",
                     "object_label": "Run a marathon",
-                    "attributes": {"plan": "Run a marathon", "timeframe": "October 2025", "confidence_level": "medium"},
+                    "attributes": {
+                        "plan": "Run a marathon",
+                        "timeframe": "October 2025",
+                        "confidence_level": "medium",
+                    },
                     "confidence": 0.64,
                     "evidence": ["m604", "m605"],
                     "merged_from": [144, 145],
@@ -1391,7 +1451,11 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
             {
                 "fact_id": 155,
                 "object_label": "GraphCon",
-                "attributes": {"event_name": "GraphCon", "date": "2024-05-12", "format": "in-person"},
+                "attributes": {
+                    "event_name": "GraphCon",
+                    "date": "2024-05-12",
+                    "format": "in-person",
+                },
                 "confidence": 0.68,
                 "evidence": ["m705"],
             },
@@ -1402,7 +1466,12 @@ FEW_SHOT_EXAMPLES: dict[str, FewShotExample] = {
                     "type": "ATTENDED_EVENT",
                     "subject_id": "user_42",
                     "object_label": "GraphCon",
-                    "attributes": {"event_name": "GraphCon", "date": "2024-05-12", "role": "speaker", "format": "in-person"},
+                    "attributes": {
+                        "event_name": "GraphCon",
+                        "date": "2024-05-12",
+                        "role": "speaker",
+                        "format": "in-person",
+                    },
                     "confidence": 0.75,
                     "evidence": ["m704", "m705"],
                     "merged_from": [154, 155],
@@ -1451,10 +1520,16 @@ def _format_attribute_priorities(fact_type: FactType) -> str:
     )
 
 
-def build_messages(partition: Partition, candidate_facts: Iterable[FactRecord]) -> list[dict[str, str]]:
+def build_messages(
+    partition: Partition, candidate_facts: Iterable[FactRecord]
+) -> list[dict[str, str]]:
     template = select_template(partition.fact_type)
     examples = template.examples_for_fact_type(partition.fact_type)
-    examples_text = "\n\n".join(format_example(example) for example in examples) if examples else "(No examples available)"
+    examples_text = (
+        "\n\n".join(format_example(example) for example in examples)
+        if examples
+        else "(No examples available)"
+    )
 
     facts_payload = [
         {

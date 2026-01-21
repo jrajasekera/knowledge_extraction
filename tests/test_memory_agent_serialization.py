@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from memory_agent.models import MessageModel
@@ -12,7 +12,7 @@ def test_to_serializable_handles_nested_models() -> None:
         author_id="user-1",
         author_name="Bob",
         content="Hi",
-        timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 1, 1, tzinfo=UTC),
         message_id="msg-1",
     )
     payload = {"messages": [message], "path": Path("./foo.txt")}
@@ -29,7 +29,7 @@ def test_json_dumps_is_stable() -> None:
         author_id="user-2",
         author_name="Alice",
         content="Hello",
-        timestamp=datetime(2025, 2, 2, tzinfo=timezone.utc),
+        timestamp=datetime(2025, 2, 2, tzinfo=UTC),
         message_id="msg-2",
     )
 

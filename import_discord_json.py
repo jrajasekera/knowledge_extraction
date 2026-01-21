@@ -12,21 +12,26 @@ import argparse
 import datetime
 import sqlite3
 import textwrap
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import Any
 
 import orjson
 
 from db_utils import get_sqlite_connection
 
-def iso(dt: Optional[str]) -> Optional[str]:
+
+def iso(dt: str | None) -> str | None:
     return dt if dt else None
+
 
 def as_bool(v: Any) -> int:
     return 1 if bool(v) else 0
 
-def ensure(conn: sqlite3.Connection, sql: str, params: Tuple):
+
+def ensure(conn: sqlite3.Connection, sql: str, params: tuple):
     conn.execute(sql, params)
+
 
 def has_existing_import(
     conn: sqlite3.Connection,
@@ -42,110 +47,247 @@ def has_existing_import(
     return cur.fetchone() is not None
 
 
-def insert_import_batch(conn: sqlite3.Connection, source_path: str, exported_at: str, message_count: int) -> int:
+def insert_import_batch(
+    conn: sqlite3.Connection, source_path: str, exported_at: str, message_count: int
+) -> int:
     cur = conn.execute(
         "INSERT INTO import_batch (source_path, exported_at_iso, reported_msg_count, loaded_msg_count) VALUES (?,?,?,0)",
         (source_path, exported_at, int(message_count)),
     )
     return int(cur.lastrowid)
 
+
 def finalize_import_batch(conn: sqlite3.Connection, batch_id: int, loaded_count: int):
-    conn.execute("UPDATE import_batch SET loaded_msg_count = ? WHERE id = ?", (int(loaded_count), int(batch_id)))
+    conn.execute(
+        "UPDATE import_batch SET loaded_msg_count = ? WHERE id = ?",
+        (int(loaded_count), int(batch_id)),
+    )
 
-def upsert_guild(conn: sqlite3.Connection, g: Dict[str, Any]):
-    ensure(conn, "INSERT OR IGNORE INTO guild (id, name, icon_url) VALUES (?,?,?)",
-           (str(g.get("id")), g.get("name",""), g.get("iconUrl")))
 
-def upsert_channel(conn: sqlite3.Connection, c: Dict[str, Any], guild_id: str):
-    ensure(conn, "INSERT OR IGNORE INTO channel (id, guild_id, type, category_id, category, name, topic) VALUES (?,?,?,?,?,?,?)",
-           (str(c.get("id")), str(guild_id), c.get("type",""), c.get("categoryId"), c.get("category"), c.get("name",""), c.get("topic")))
+def upsert_guild(conn: sqlite3.Connection, g: dict[str, Any]):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO guild (id, name, icon_url) VALUES (?,?,?)",
+        (str(g.get("id")), g.get("name", ""), g.get("iconUrl")),
+    )
 
-def upsert_role(conn: sqlite3.Connection, role: Dict[str, Any], guild_id: str):
-    ensure(conn, "INSERT OR IGNORE INTO role (id, guild_id, name, color_hex, position) VALUES (?,?,?,?,?)",
-           (str(role.get("id")), str(guild_id), role.get("name",""), role.get("color"), role.get("position") or 0))
 
-def upsert_member(conn: sqlite3.Connection, m: Dict[str, Any]):
-    ensure(conn, "INSERT OR IGNORE INTO member (id, name, discriminator, nickname, color_hex, is_bot, avatar_url) VALUES (?,?,?,?,?,?,?)",
-           (str(m.get("id")), m.get("name",""), m.get("discriminator","0000"), m.get("nickname"),
-            (m.get("color") or {}).get("hex") if isinstance(m.get("color"), dict) else m.get("color"),
-            as_bool(m.get("isBot", False)), m.get("avatarUrl")))
+def upsert_channel(conn: sqlite3.Connection, c: dict[str, Any], guild_id: str):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO channel (id, guild_id, type, category_id, category, name, topic) VALUES (?,?,?,?,?,?,?)",
+        (
+            str(c.get("id")),
+            str(guild_id),
+            c.get("type", ""),
+            c.get("categoryId"),
+            c.get("category"),
+            c.get("name", ""),
+            c.get("topic"),
+        ),
+    )
 
-def link_member_roles(conn: sqlite3.Connection, member_id: str, roles: List[Dict[str, Any]]):
+
+def upsert_role(conn: sqlite3.Connection, role: dict[str, Any], guild_id: str):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO role (id, guild_id, name, color_hex, position) VALUES (?,?,?,?,?)",
+        (
+            str(role.get("id")),
+            str(guild_id),
+            role.get("name", ""),
+            role.get("color"),
+            role.get("position") or 0,
+        ),
+    )
+
+
+def upsert_member(conn: sqlite3.Connection, m: dict[str, Any]):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO member (id, name, discriminator, nickname, color_hex, is_bot, avatar_url) VALUES (?,?,?,?,?,?,?)",
+        (
+            str(m.get("id")),
+            m.get("name", ""),
+            m.get("discriminator", "0000"),
+            m.get("nickname"),
+            (m.get("color") or {}).get("hex")
+            if isinstance(m.get("color"), dict)
+            else m.get("color"),
+            as_bool(m.get("isBot", False)),
+            m.get("avatarUrl"),
+        ),
+    )
+
+
+def link_member_roles(conn: sqlite3.Connection, member_id: str, roles: list[dict[str, Any]]):
     for r in roles or []:
-        ensure(conn, "INSERT OR IGNORE INTO member_role (member_id, role_id) VALUES (?,?)",
-               (str(member_id), str(r.get("id"))))
+        ensure(
+            conn,
+            "INSERT OR IGNORE INTO member_role (member_id, role_id) VALUES (?,?)",
+            (str(member_id), str(r.get("id"))),
+        )
 
-def insert_message(conn: sqlite3.Connection, msg: Dict[str, Any], guild_id: str, channel_id: str, batch_id: int):
-    ensure(conn, textwrap.dedent("""
+
+def insert_message(
+    conn: sqlite3.Connection, msg: dict[str, Any], guild_id: str, channel_id: str, batch_id: int
+):
+    ensure(
+        conn,
+        textwrap.dedent("""
         INSERT OR IGNORE INTO message
           (id, channel_id, guild_id, author_id, type, timestamp, timestamp_edited, call_ended_at, is_pinned, content, import_batch_id)
         VALUES (?,?,?,?,?,?,?,?,?,?,?)
     """),
-    (str(msg.get("id")), str(channel_id), str(guild_id), str(msg["author"]["id"]),
-     msg.get("type","Default"), iso(msg.get("timestamp")), iso(msg.get("timestampEdited")), iso(msg.get("callEndedTimestamp")),
-     as_bool(msg.get("isPinned", False)), msg.get("content",""), int(batch_id))
+        (
+            str(msg.get("id")),
+            str(channel_id),
+            str(guild_id),
+            str(msg["author"]["id"]),
+            msg.get("type", "Default"),
+            iso(msg.get("timestamp")),
+            iso(msg.get("timestampEdited")),
+            iso(msg.get("callEndedTimestamp")),
+            as_bool(msg.get("isPinned", False)),
+            msg.get("content", ""),
+            int(batch_id),
+        ),
     )
 
-def insert_reference(conn: sqlite3.Connection, msg_id: str, ref: Dict[str, Any]):
-    ensure(conn, "INSERT OR IGNORE INTO message_reference (message_id, ref_message_id, ref_channel_id, ref_guild_id) VALUES (?,?,?,?)",
-           (str(msg_id), str(ref.get("messageId")), str(ref.get("channelId")), str(ref.get("guildId")) if ref.get("guildId") else None))
 
-def insert_attachment(conn: sqlite3.Connection, msg_id: str, att: Dict[str, Any]):
-    ensure(conn, "INSERT OR IGNORE INTO attachment (id, message_id, url, file_name, file_size_bytes) VALUES (?,?,?,?,?)",
-           (str(att.get("id") or f"{msg_id}:{att.get('url')}"), str(msg_id), att.get("url",""),
-            att.get("fileName") or att.get("filename") or "", int(att.get("fileSizeBytes") or att.get("sizeBytes") or att.get("size") or 0)))
+def insert_reference(conn: sqlite3.Connection, msg_id: str, ref: dict[str, Any]):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO message_reference (message_id, ref_message_id, ref_channel_id, ref_guild_id) VALUES (?,?,?,?)",
+        (
+            str(msg_id),
+            str(ref.get("messageId")),
+            str(ref.get("channelId")),
+            str(ref.get("guildId")) if ref.get("guildId") else None,
+        ),
+    )
 
-def insert_embed(conn: sqlite3.Connection, msg_id: str, e: Dict[str, Any], idx: int):
-    embed_id = int(f"{hash(str(msg_id)) & 0x7fffffff}{idx}") if e.get("id") is None else int(e.get("id"))
-    ensure(conn, textwrap.dedent("""
+
+def insert_attachment(conn: sqlite3.Connection, msg_id: str, att: dict[str, Any]):
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO attachment (id, message_id, url, file_name, file_size_bytes) VALUES (?,?,?,?,?)",
+        (
+            str(att.get("id") or f"{msg_id}:{att.get('url')}"),
+            str(msg_id),
+            att.get("url", ""),
+            att.get("fileName") or att.get("filename") or "",
+            int(att.get("fileSizeBytes") or att.get("sizeBytes") or att.get("size") or 0),
+        ),
+    )
+
+
+def insert_embed(conn: sqlite3.Connection, msg_id: str, e: dict[str, Any], idx: int):
+    embed_id = (
+        int(f"{hash(str(msg_id)) & 0x7FFFFFFF}{idx}") if e.get("id") is None else int(e.get("id"))
+    )
+    ensure(
+        conn,
+        textwrap.dedent("""
         INSERT OR IGNORE INTO embed
           (id, message_id, title, url, timestamp, description, color_hex,
            author_name, author_url, thumbnail_url, thumbnail_w, thumbnail_h,
            video_url, video_w, video_h)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """),
-    (embed_id, str(msg_id), e.get("title"), e.get("url"), iso(e.get("timestamp")), e.get("description"),
-     (e.get("color") or {}).get("hex") if isinstance(e.get("color"), dict) else e.get("color"),
-     (e.get("author") or {}).get("name"), (e.get("author") or {}).get("url"),
-     (e.get("thumbnail") or {}).get("url"), (e.get("thumbnail") or {}).get("width"), (e.get("thumbnail") or {}).get("height"),
-     (e.get("video") or {}).get("url"), (e.get("video") or {}).get("width"), (e.get("video") or {}).get("height"))
+        (
+            embed_id,
+            str(msg_id),
+            e.get("title"),
+            e.get("url"),
+            iso(e.get("timestamp")),
+            e.get("description"),
+            (e.get("color") or {}).get("hex")
+            if isinstance(e.get("color"), dict)
+            else e.get("color"),
+            (e.get("author") or {}).get("name"),
+            (e.get("author") or {}).get("url"),
+            (e.get("thumbnail") or {}).get("url"),
+            (e.get("thumbnail") or {}).get("width"),
+            (e.get("thumbnail") or {}).get("height"),
+            (e.get("video") or {}).get("url"),
+            (e.get("video") or {}).get("width"),
+            (e.get("video") or {}).get("height"),
+        ),
     )
     # embed images array
-    for img in (e.get("images") or []):
-        ensure(conn, "INSERT OR IGNORE INTO embed_image (embed_id, url, width, height) VALUES (?,?,?,?)",
-               (embed_id, img.get("url",""), img.get("width"), img.get("height")))
+    for img in e.get("images") or []:
+        ensure(
+            conn,
+            "INSERT OR IGNORE INTO embed_image (embed_id, url, width, height) VALUES (?,?,?,?)",
+            (embed_id, img.get("url", ""), img.get("width"), img.get("height")),
+        )
 
-def insert_inline_emoji(conn: sqlite3.Connection, msg_id: str, ie: Dict[str, Any]):
-    ensure(conn, "INSERT INTO inline_emoji (message_id, emoji_id, name, code, is_animated, image_url) VALUES (?,?,?,?,?,?)",
-           (str(msg_id), ie.get("id"), ie.get("name",""), ie.get("code") or "", as_bool(ie.get("isAnimated", False)), ie.get("imageUrl")))
 
-def upsert_emoji(conn: sqlite3.Connection, em: Dict[str, Any]):
+def insert_inline_emoji(conn: sqlite3.Connection, msg_id: str, ie: dict[str, Any]):
+    ensure(
+        conn,
+        "INSERT INTO inline_emoji (message_id, emoji_id, name, code, is_animated, image_url) VALUES (?,?,?,?,?,?)",
+        (
+            str(msg_id),
+            ie.get("id"),
+            ie.get("name", ""),
+            ie.get("code") or "",
+            as_bool(ie.get("isAnimated", False)),
+            ie.get("imageUrl"),
+        ),
+    )
+
+
+def upsert_emoji(conn: sqlite3.Connection, em: dict[str, Any]):
     # composite PK (id, name). id may be null, so use None in tuple.
-    ensure(conn, "INSERT OR IGNORE INTO emoji (id, name, code, is_animated, image_url) VALUES (?,?,?,?,?)",
-           (em.get("id"), em.get("name",""), em.get("code") or "", as_bool(em.get("isAnimated", False)), em.get("imageUrl")))
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO emoji (id, name, code, is_animated, image_url) VALUES (?,?,?,?,?)",
+        (
+            em.get("id"),
+            em.get("name", ""),
+            em.get("code") or "",
+            as_bool(em.get("isAnimated", False)),
+            em.get("imageUrl"),
+        ),
+    )
 
-def insert_reaction(conn: sqlite3.Connection, msg_id: str, r: Dict[str, Any]):
+
+def insert_reaction(conn: sqlite3.Connection, msg_id: str, r: dict[str, Any]):
     # Ensure emoji exists
     upsert_emoji(conn, r.get("emoji", {}))
     emoji_id = r.get("emoji", {}).get("id")
     emoji_name = r.get("emoji", {}).get("name", "")
-    ensure(conn, "INSERT OR IGNORE INTO reaction (message_id, emoji_id, emoji_name, count) VALUES (?,?,?,?)",
-           (str(msg_id), emoji_id, emoji_name, int(r.get("count", 0))))
+    ensure(
+        conn,
+        "INSERT OR IGNORE INTO reaction (message_id, emoji_id, emoji_name, count) VALUES (?,?,?,?)",
+        (str(msg_id), emoji_id, emoji_name, int(r.get("count", 0))),
+    )
 
-def insert_reaction_users(conn: sqlite3.Connection, msg_id: str, r: Dict[str, Any]):
+
+def insert_reaction_users(conn: sqlite3.Connection, msg_id: str, r: dict[str, Any]):
     emoji_name = r.get("emoji", {}).get("name", "")
     for u in r.get("users", []):
         upsert_member(conn, u)
-        ensure(conn, "INSERT OR IGNORE INTO reaction_user (message_id, emoji_name, user_id) VALUES (?,?,?)",
-               (str(msg_id), emoji_name, str(u.get("id"))))
+        ensure(
+            conn,
+            "INSERT OR IGNORE INTO reaction_user (message_id, emoji_name, user_id) VALUES (?,?,?)",
+            (str(msg_id), emoji_name, str(u.get("id"))),
+        )
 
-def insert_mentions(conn: sqlite3.Connection, msg_id: str, mentions: List[Dict[str, Any]]):
+
+def insert_mentions(conn: sqlite3.Connection, msg_id: str, mentions: list[dict[str, Any]]):
     for m in mentions or []:
         upsert_member(conn, m)
-        ensure(conn, "INSERT OR IGNORE INTO message_mention (message_id, member_id) VALUES (?,?)",
-               (str(msg_id), str(m.get("id"))))
+        ensure(
+            conn,
+            "INSERT OR IGNORE INTO message_mention (message_id, member_id) VALUES (?,?)",
+            (str(msg_id), str(m.get("id"))),
+        )
 
-def _load_json(path: Path) -> Dict[str, Any]:
+
+def _load_json(path: Path) -> dict[str, Any]:
     raw = path.read_bytes()
     return orjson.loads(raw)
 
@@ -178,7 +320,7 @@ def process_file(conn: sqlite3.Connection, path: Path, *, skip_existing: bool = 
         # authors & roles
         author = msg.get("author", {})
         upsert_member(conn, author)
-        for role in (author.get("roles") or []):
+        for role in author.get("roles") or []:
             upsert_role(conn, role, str(guild.get("id")))
         link_member_roles(conn, str(author.get("id")), author.get("roles") or [])
 
@@ -215,7 +357,7 @@ def process_file(conn: sqlite3.Connection, path: Path, *, skip_existing: bool = 
     return loaded
 
 
-def iter_json_files(*paths: Optional[Path]) -> Iterator[Path]:
+def iter_json_files(*paths: Path | None) -> Iterator[Path]:
     for maybe_path in paths:
         if maybe_path is None:
             continue

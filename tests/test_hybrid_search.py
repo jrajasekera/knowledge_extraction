@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 from memory_agent.tools.semantic_search import KEYWORD_QUERY_OFFSET
 
 
@@ -66,4 +64,4 @@ class TestHybridSearchConfiguration:
         """Test that offset is large enough to separate vector and keyword votes."""
         # With max ~100 queries per request, offset of 1000 ensures no collision
         max_expected_queries = 100
-        assert KEYWORD_QUERY_OFFSET >= max_expected_queries * 10
+        assert max_expected_queries * 10 <= KEYWORD_QUERY_OFFSET

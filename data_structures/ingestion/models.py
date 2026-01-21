@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
@@ -335,7 +336,7 @@ class ConversationExport(BaseModel):
         return tuple(message.id for message in self.messages)
 
     @model_validator(mode="after")
-    def _reconcile_message_count(self) -> "ConversationExport":
+    def _reconcile_message_count(self) -> ConversationExport:
         if self.message_count != len(self.messages):
             # Keep the reported count for reference but do not treat as fatal.
             pass

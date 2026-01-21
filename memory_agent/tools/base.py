@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from neo4j import Driver, Session
 from pydantic import BaseModel
 
-
 logger = logging.getLogger(__name__)
-
-InputT = TypeVar("InputT", bound=BaseModel)
-OutputT = TypeVar("OutputT", bound=BaseModel)
 
 
 @dataclass(slots=True)
@@ -32,7 +28,7 @@ class ToolError(RuntimeError):
     """Raised when a tool encounters an unrecoverable error."""
 
 
-class ToolBase(Generic[InputT, OutputT]):
+class ToolBase[InputT: BaseModel, OutputT: BaseModel]:
     """Abstract base class enforcing a common execution contract."""
 
     name: str

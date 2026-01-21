@@ -9,7 +9,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from ..embeddings import EmbeddingProvider
-from ..models import RetrievedFact
 from .base import ToolBase, ToolContext, ToolError
 from .utils import run_keyword_query, run_vector_query
 
@@ -199,6 +198,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         if isinstance(attributes_raw, str):
             try:
                 import json
+
                 attributes = json.loads(attributes_raw)
             except json.JSONDecodeError:
                 attributes = {}
@@ -325,7 +325,9 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
 
                     node = row.get("node")
                     if not node:
-                        logger.debug("Query %d (%s): Skipping row with missing node", query_idx, source_type)
+                        logger.debug(
+                            "Query %d (%s): Skipping row with missing node", query_idx, source_type
+                        )
                         continue
 
                     properties = dict(node)
@@ -337,7 +339,11 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
                     dedup_key = (person_id, fact_type, fact_object, relationship_type)
 
                     evidence_with_content = row.get("evidence_with_content", [])
-                    evidence = evidence_with_content if evidence_with_content else properties.get("evidence") or []
+                    evidence = (
+                        evidence_with_content
+                        if evidence_with_content
+                        else properties.get("evidence") or []
+                    )
 
                     occurrence = occurrences.get(dedup_key)
                     if occurrence is None:
@@ -364,17 +370,22 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         best_occurrences: dict[tuple[str, str, str | None, str | None], FactOccurrence] = {}
         best_threshold = current_threshold
 
-        max_iterations = int(
-            (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
-            / ADAPTIVE_THRESHOLD_STEP
-        ) + 1
+        max_iterations = (
+            int(
+                (input_data.adaptive_threshold_max - input_data.adaptive_threshold_min)
+                / ADAPTIVE_THRESHOLD_STEP
+            )
+            + 1
+        )
 
         search_limit = int(
             max(input_data.limit * ADAPTIVE_SEARCH_RESULT_MULTIPLIER, input_data.limit)
         )
 
         iterations = 0
-        while current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations:
+        while (
+            current_threshold >= input_data.adaptive_threshold_min and iterations < max_iterations
+        ):
             iterations += 1
 
             logger.info(
@@ -460,7 +471,11 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         if adaptive_mode:
             occurrences, final_threshold = self._search_with_adaptive_threshold(input_data)
         else:
-            threshold = input_data.similarity_threshold if input_data.similarity_threshold is not None else 0.6
+            threshold = (
+                input_data.similarity_threshold
+                if input_data.similarity_threshold is not None
+                else 0.6
+            )
             occurrences = self._execute_search_pass(
                 input_data,
                 threshold,

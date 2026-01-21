@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TextIO
 
 from .models import DeduplicationStats, Partition
@@ -47,7 +47,9 @@ class ProgressDisplay:
         self._last_line_text: str = ""
         self._needs_redraw = False
 
-    def set_active_partition(self, partition: Partition | None, fact_count: int | None = None) -> None:
+    def set_active_partition(
+        self, partition: Partition | None, fact_count: int | None = None
+    ) -> None:
         if not self._enabled:
             return
         if partition is None:
@@ -137,7 +139,7 @@ class ProgressDisplay:
         return percent, bar
 
     def _elapsed_seconds(self) -> float:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return max(0.0, (now - self._started_at).total_seconds())
 
     def _estimate_eta(self, elapsed: float, processed: int, total: int) -> float | None:
@@ -171,10 +173,10 @@ class ProgressDisplay:
     @staticmethod
     def _normalize_start(started_at: datetime | None) -> datetime:
         if started_at is None:
-            return datetime.now(timezone.utc)
+            return datetime.now(UTC)
         if started_at.tzinfo is None:
-            return started_at.replace(tzinfo=timezone.utc)
-        return started_at.astimezone(timezone.utc)
+            return started_at.replace(tzinfo=UTC)
+        return started_at.astimezone(UTC)
 
     @property
     def enabled(self) -> bool:

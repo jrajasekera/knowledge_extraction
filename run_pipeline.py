@@ -7,17 +7,18 @@ import argparse
 import json
 import sqlite3
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from db_utils import get_sqlite_connection
 from facts_to_graph import MaterializeSummary, materialize_facts
-from ie import IEConfig, LlamaServerConfig, FactType, IERunStats, reset_ie_progress, run_ie_job
+from ie import FactType, IEConfig, IERunStats, LlamaServerConfig, reset_ie_progress, run_ie_job
 from import_discord_json import ingest_exports
 from loader import load_into_neo4j
 
 PIPELINE_STAGES: tuple[str, ...] = ("ingest", "load", "ie", "facts")
-StageRunner = Callable[[], Optional[Dict[str, Any]]]
+StageRunner = Callable[[], dict[str, Any] | None]
 
 
 def _ensure_official_name_column(conn: sqlite3.Connection) -> None:
@@ -48,7 +49,7 @@ def apply_schema(sqlite_path: Path, schema_path: Path) -> None:
         conn.close()
 
 
-def _serialize_details(details: Optional[Dict[str, Any]]) -> Optional[str]:
+def _serialize_details(details: dict[str, Any] | None) -> str | None:
     if details is None:
         return None
     if isinstance(details, str):
@@ -87,7 +88,7 @@ def _set_stage_status(
     run_id: int,
     stage: str,
     status: str,
-    details: Optional[Dict[str, Any]] = None,
+    details: dict[str, Any] | None = None,
 ) -> None:
     conn.execute(
         """
@@ -104,7 +105,7 @@ def _set_stage_status(
     conn.commit()
 
 
-def _get_active_pipeline_run(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
+def _get_active_pipeline_run(conn: sqlite3.Connection) -> sqlite3.Row | None:
     return conn.execute(
         """
         SELECT id, status, current_stage
@@ -116,7 +117,7 @@ def _get_active_pipeline_run(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     ).fetchone()
 
 
-def _first_pending_stage(conn: sqlite3.Connection, run_id: int) -> Optional[str]:
+def _first_pending_stage(conn: sqlite3.Connection, run_id: int) -> str | None:
     rows = conn.execute(
         "SELECT stage, status FROM pipeline_stage_state WHERE run_id = ?",
         (run_id,),
@@ -144,11 +145,11 @@ def _update_run_status(
     run_id: int,
     status: str,
     *,
-    stage: Optional[str] = None,
+    stage: str | None = None,
     completed: bool = False,
 ) -> None:
     assignments = ["status = :status", "updated_at = CURRENT_TIMESTAMP"]
-    params: Dict[str, Any] = {"status": status, "id": run_id}
+    params: dict[str, Any] = {"status": status, "id": run_id}
     if stage is not None:
         assignments.append("current_stage = :stage")
         params["stage"] = stage
@@ -236,14 +237,12 @@ def _run_pipeline(
 ) -> None:
     json_path = args.json.resolve() if args.json else None
     json_dir = args.json_dir.resolve() if args.json_dir else None
-    fact_types = (
-        tuple(FactType(value) for value in args.fact_types)
-        if args.fact_types
-        else None
-    )
+    fact_types = tuple(FactType(value) for value in args.fact_types) if args.fact_types else None
 
     if args.resume and not args.no_fact_graph and _has_dirty_facts(conn):
-        print("[pipeline] Detected unsynced facts from previous run; materializing before resuming...")
+        print(
+            "[pipeline] Detected unsynced facts from previous run; materializing before resuming..."
+        )
         summary = materialize_facts(
             sqlite_path,
             neo4j_uri=args.neo4j_uri,
@@ -265,7 +264,8 @@ def _run_pipeline(
         print(f"[pipeline] Stage: {stage}")
 
         if stage == "ingest":
-            def run_ingest() -> Dict[str, Any]:
+
+            def run_ingest() -> dict[str, Any]:
                 print("Applying Discord exports into SQLite...")
                 total = ingest_exports(
                     sqlite_path,
@@ -279,7 +279,8 @@ def _run_pipeline(
             continue
 
         if stage == "load":
-            def run_load() -> Dict[str, Any]:
+
+            def run_load() -> dict[str, Any]:
                 print("Loading data into Neo4j...")
                 load_into_neo4j(
                     sqlite_path,
@@ -298,11 +299,13 @@ def _run_pipeline(
                 _set_stage_status(conn, run_id, stage, "completed", {"skipped": True})
                 continue
 
-            def run_ie() -> Dict[str, Any]:
+            def run_ie() -> dict[str, Any]:
                 resume_ie = _has_ie_progress(sqlite_path)
                 if args.reset_ie_cache:
                     if resume_ie:
-                        print("[IE] Clearing saved IE progress and cached window state (--reset-ie-cache).")
+                        print(
+                            "[IE] Clearing saved IE progress and cached window state (--reset-ie-cache)."
+                        )
                     else:
                         print("[IE] Clearing cached IE window state (--reset-ie-cache).")
                     reset_ie_progress(sqlite_path, clear_cache=True)
@@ -345,7 +348,7 @@ def _run_pipeline(
                 _set_stage_status(conn, run_id, stage, "completed", {"skipped": True})
                 continue
 
-            def run_facts() -> Dict[str, Any]:
+            def run_facts() -> dict[str, Any]:
                 summary: MaterializeSummary = materialize_facts(
                     sqlite_path,
                     neo4j_uri=args.neo4j_uri,
@@ -363,17 +366,36 @@ def _run_pipeline(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the Discord knowledge extraction pipeline end-to-end.")
-    parser.add_argument("--sqlite", type=Path, default=Path("./discord.db"), help="Path to the SQLite database file.")
-    parser.add_argument("--schema", type=Path, default=Path("./schema.sql"), help="Path to the schema.sql file.")
-    parser.add_argument("--json", type=Path, help="Optional path to a single Discord export JSON file.")
-    parser.add_argument("--json-dir", type=Path, help="Optional directory containing Discord export JSON files.")
+    parser = argparse.ArgumentParser(
+        description="Run the Discord knowledge extraction pipeline end-to-end."
+    )
+    parser.add_argument(
+        "--sqlite",
+        type=Path,
+        default=Path("./discord.db"),
+        help="Path to the SQLite database file.",
+    )
+    parser.add_argument(
+        "--schema", type=Path, default=Path("./schema.sql"), help="Path to the schema.sql file."
+    )
+    parser.add_argument(
+        "--json", type=Path, help="Optional path to a single Discord export JSON file."
+    )
+    parser.add_argument(
+        "--json-dir", type=Path, help="Optional directory containing Discord export JSON files."
+    )
     parser.add_argument("--neo4j-uri", default="bolt://localhost:7687", help="Neo4j bolt URI.")
     parser.add_argument("--neo4j-user", default="neo4j", help="Neo4j username.")
     parser.add_argument("--neo4j-password", required=True, help="Neo4j password.")
-    parser.add_argument("--no-ie", action="store_true", help="Skip the IE stage after loading data.")
-    parser.add_argument("--ie-window-size", type=int, default=8, help="Message window size for IE prompts.")
-    parser.add_argument("--ie-confidence", type=float, default=0.5, help="Minimum confidence to store IE facts.")
+    parser.add_argument(
+        "--no-ie", action="store_true", help="Skip the IE stage after loading data."
+    )
+    parser.add_argument(
+        "--ie-window-size", type=int, default=8, help="Message window size for IE prompts."
+    )
+    parser.add_argument(
+        "--ie-confidence", type=float, default=0.5, help="Minimum confidence to store IE facts."
+    )
     parser.add_argument(
         "--ie-max-windows",
         type=int,
@@ -395,15 +417,41 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Clear cached IE window state before running the IE stage.",
     )
-    parser.add_argument("--llama-url", default="http://localhost:8080/v1/chat/completions", help="llama-server chat completions URL.")
-    parser.add_argument("--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server.")
-    parser.add_argument("--llama-temperature", type=float, default=0.3, help="Generation temperature for llama-server.")
-    parser.add_argument("--llama-top-p", type=float, default=0.95, help="Top-p nucleus sampling for llama-server.")
-    parser.add_argument("--llama-max-tokens", type=int, default=4096, help="Max tokens for llama-server responses.")
-    parser.add_argument("--llama-timeout", type=float, default=600.0, help="llama-server HTTP timeout (seconds).")
-    parser.add_argument("--llama-api-key", help="Optional bearer token if llama-server requires auth.")
-    parser.add_argument("--no-fact-graph", action="store_true", help="Skip materializing facts into Neo4j.")
-    parser.add_argument("--fact-confidence", type=float, default=0.5, help="Minimum confidence when merging facts into Neo4j.")
+    parser.add_argument(
+        "--llama-url",
+        default="http://localhost:8080/v1/chat/completions",
+        help="llama-server chat completions URL.",
+    )
+    parser.add_argument(
+        "--llama-model", default="GLM-4.5-Air", help="Model name to request from llama-server."
+    )
+    parser.add_argument(
+        "--llama-temperature",
+        type=float,
+        default=0.3,
+        help="Generation temperature for llama-server.",
+    )
+    parser.add_argument(
+        "--llama-top-p", type=float, default=0.95, help="Top-p nucleus sampling for llama-server."
+    )
+    parser.add_argument(
+        "--llama-max-tokens", type=int, default=4096, help="Max tokens for llama-server responses."
+    )
+    parser.add_argument(
+        "--llama-timeout", type=float, default=600.0, help="llama-server HTTP timeout (seconds)."
+    )
+    parser.add_argument(
+        "--llama-api-key", help="Optional bearer token if llama-server requires auth."
+    )
+    parser.add_argument(
+        "--no-fact-graph", action="store_true", help="Skip materializing facts into Neo4j."
+    )
+    parser.add_argument(
+        "--fact-confidence",
+        type=float,
+        default=0.5,
+        help="Minimum confidence when merging facts into Neo4j.",
+    )
     parser.add_argument(
         "--fact-types",
         nargs="*",
@@ -414,8 +462,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Re-import files even if matching metadata already exists in import_batch.",
     )
-    parser.add_argument("--resume", action="store_true", help="Resume the most recent paused pipeline run.")
-    parser.add_argument("--restart", action="store_true", help="Start a new pipeline run even if one is active.")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume the most recent paused pipeline run."
+    )
+    parser.add_argument(
+        "--restart", action="store_true", help="Start a new pipeline run even if one is active."
+    )
     return parser.parse_args()
 
 

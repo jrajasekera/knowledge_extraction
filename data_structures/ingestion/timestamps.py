@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _OFFSET_PATTERN = re.compile(r"([+-]\d{2}):?(\d{2})(?::(\d{2}))?$")
 
@@ -24,7 +24,7 @@ def normalize_iso_timestamp(raw: str | None) -> str | None:
     match = _OFFSET_PATTERN.search(candidate)
     if match:
         hours, minutes, _seconds = match.groups()
-        candidate = candidate[: match.start()] + f"{hours}:{minutes}" + candidate[match.end():]
+        candidate = candidate[: match.start()] + f"{hours}:{minutes}" + candidate[match.end() :]
 
     try:
         dt_obj = datetime.fromisoformat(candidate)
@@ -32,7 +32,7 @@ def normalize_iso_timestamp(raw: str | None) -> str | None:
         return None
 
     if dt_obj.tzinfo is None:
-        dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+        dt_obj = dt_obj.replace(tzinfo=UTC)
 
     timespec = "microseconds" if dt_obj.microsecond else "seconds"
     iso_value = dt_obj.isoformat(timespec=timespec)

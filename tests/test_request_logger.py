@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -64,7 +64,7 @@ def test_log_request_start(temp_db):
                 author_id="user-123",
                 author_name="Test User",
                 content="Test query",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         ],
         channel_id="test-channel",
@@ -74,7 +74,10 @@ def test_log_request_start(temp_db):
 
     # Verify the record was created
     conn = sqlite3.connect(str(temp_db))
-    cursor = conn.execute("SELECT id, query, status_code, client_ip FROM memory_agent_request_log WHERE id = ?", ("test-request-id",))
+    cursor = conn.execute(
+        "SELECT id, query, status_code, client_ip FROM memory_agent_request_log WHERE id = ?",
+        ("test-request-id",),
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -96,7 +99,7 @@ def test_log_request_complete(temp_db):
                 author_id="user-123",
                 author_name="Test User",
                 content="Test query",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         ],
         channel_id="test-channel",
@@ -150,7 +153,7 @@ def test_log_request_error(temp_db):
                 author_id="user-123",
                 author_name="Test User",
                 content="Test query",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         ],
         channel_id="test-channel",
@@ -206,7 +209,7 @@ def test_query_extraction_from_multiple_messages(temp_db):
     """Test that query is extracted from the last message."""
     logger = RequestLogger(temp_db)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     request = RetrievalRequest(
         messages=[
             MessageModel(
@@ -235,7 +238,9 @@ def test_query_extraction_from_multiple_messages(temp_db):
 
     # Verify the query is from the last message
     conn = sqlite3.connect(str(temp_db))
-    cursor = conn.execute("SELECT query FROM memory_agent_request_log WHERE id = ?", ("test-request-id",))
+    cursor = conn.execute(
+        "SELECT query FROM memory_agent_request_log WHERE id = ?", ("test-request-id",)
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -254,7 +259,7 @@ def test_logging_failure_is_non_fatal(temp_db):
                 author_id="user-123",
                 author_name="Test User",
                 content="Test",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         ],
         channel_id="test-channel",

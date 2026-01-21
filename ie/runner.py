@@ -4,10 +4,10 @@ import json
 import sqlite3
 import sys
 import time
+from collections.abc import Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import httpx
 from pydantic import ValidationError
@@ -16,8 +16,8 @@ from pydantic import ValidationError
 if str(Path(__file__).resolve().parents[1]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db_utils import get_sqlite_connection
 from data_structures.ingestion import normalize_iso_timestamp
+from db_utils import get_sqlite_connection
 
 from .advanced_prompts import build_enhanced_prompt
 from .client import LlamaServerClient, LlamaServerConfig
@@ -49,7 +49,7 @@ class IERunStats:
             "run_id": self.run_id,
             "processed_windows": self.processed_windows,
             "skipped_windows": self.skipped_windows,
-             "cached_windows": self.cached_windows,
+            "cached_windows": self.cached_windows,
             "returned_facts": self.returned_facts,
             "stored_facts": self.stored_facts,
             "total_windows": self.total_windows,
@@ -212,7 +212,9 @@ def _insert_ie_run(
     return int(cur.lastrowid)
 
 
-def _normalize_attributes(attributes: dict[str, object], *, object_label: str | None) -> dict[str, object]:
+def _normalize_attributes(
+    attributes: dict[str, object], *, object_label: str | None
+) -> dict[str, object]:
     normalized: dict[str, object] = {}
     for key, value in attributes.items():
         if isinstance(value, str):
@@ -291,7 +293,15 @@ def _upsert_fact(
             SET ie_run_id = ?, object_id = ?, object_type = ?, attributes = ?, ts = ?, confidence = ?, graph_synced_at = NULL
             WHERE id = ?
             """,
-            (run_id, object_id, object_type, attributes_json, stored_timestamp, confidence, fact_id),
+            (
+                run_id,
+                object_id,
+                object_type,
+                attributes_json,
+                stored_timestamp,
+                confidence,
+                fact_id,
+            ),
         )
     else:
         cur = conn.execute(
@@ -299,7 +309,16 @@ def _upsert_fact(
             INSERT INTO fact (ie_run_id, type, subject_id, object_id, object_type, attributes, ts, confidence)
             VALUES (?,?,?,?,?,?,?,?)
             """,
-            (run_id, fact_type.value, subject_id, object_id, object_type, attributes_json, stored_timestamp, confidence),
+            (
+                run_id,
+                fact_type.value,
+                subject_id,
+                object_id,
+                object_type,
+                attributes_json,
+                stored_timestamp,
+                confidence,
+            ),
         )
         fact_id = int(cur.lastrowid)
 
@@ -322,10 +341,7 @@ def run_ie_job(
     config = (config or IEConfig()).validate()
     client_config = client_config or LlamaServerConfig()
 
-    if isinstance(sqlite_path, sqlite3.Connection):
-        external_conn = sqlite_path
-    else:
-        external_conn = None
+    external_conn = sqlite_path if isinstance(sqlite_path, sqlite3.Connection) else None
 
     conn = external_conn or get_sqlite_connection(sqlite_path, timeout=60.0)
 
@@ -347,7 +363,9 @@ def run_ie_job(
     if resume and not resume_mode:
         raise RuntimeError("No IE run is currently in progress to resume.")
     if not resume and progress is not None:
-        raise RuntimeError("Existing IE progress found; pass resume=True or reset_ie_progress first.")
+        raise RuntimeError(
+            "Existing IE progress found; pass resume=True or reset_ie_progress first."
+        )
 
     processed_ids: set[str]
     if progress is None:
@@ -428,7 +446,7 @@ def run_ie_job(
     if config.max_windows is not None:
         session_target = min(session_target, config.max_windows)
 
-    with (LlamaServerClient(client_config) as client, conn):
+    with LlamaServerClient(client_config) as client, conn:
         start_time = time.time()
         processed_this_run = 0
         skipped_windows = 0
@@ -498,7 +516,12 @@ def run_ie_job(
             return _WindowTaskResult(window=window, result=result)
 
         def handle_future(fut: Future[_WindowTaskResult]) -> None:
-            nonlocal processed_this_run, total_processed, returned_facts, stored_facts, total_facts_returned
+            nonlocal \
+                processed_this_run, \
+                total_processed, \
+                returned_facts, \
+                stored_facts, \
+                total_facts_returned
             window = in_flight.pop(fut)
             try:
                 task_result = fut.result()

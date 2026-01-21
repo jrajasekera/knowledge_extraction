@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -28,7 +28,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -79,7 +79,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -110,7 +110,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -136,7 +136,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -162,7 +162,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -188,7 +188,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -222,7 +222,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -261,7 +261,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -292,7 +292,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -330,7 +330,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 
@@ -368,7 +368,7 @@ class TestExtractFactSearchQueries:
                 channel_id="test",
                 guild_id="test",
                 message_id="1",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             ),
         ]
 

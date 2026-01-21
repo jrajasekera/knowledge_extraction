@@ -3,12 +3,12 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from itertools import islice
 from pathlib import Path
-from collections import defaultdict
-from contextlib import nullcontext
-from typing import Iterable, Mapping, Sequence
 
 from neo4j import GraphDatabase
 
@@ -20,10 +20,10 @@ from ie.config import FACT_DEFINITION_INDEX
 from ie.types import FactType
 
 from .display import ProgressDisplay
-from .logging_support import ProgressLoggingManager
 from .llm.client import DeduplicationLLMClient
 from .llm.parser import CanonicalFactsParser
-from .models import CanonicalFact, CandidateGroup, DeduplicationStats, FactRecord, Partition
+from .logging_support import ProgressLoggingManager
+from .models import CandidateGroup, CanonicalFact, DeduplicationStats, FactRecord, Partition
 from .partitioning import FactPartitioner
 from .persistence import DeduplicationPersistence
 from .progress import DeduplicationProgress
@@ -58,7 +58,7 @@ class DeduplicationConfig:
     max_group_size: int = 25
     show_progress: bool = True
 
-    def validate(self) -> "DeduplicationConfig":
+    def validate(self) -> DeduplicationConfig:
         if self.minhash_threshold <= 0.0 or self.minhash_threshold > 1.0:
             raise ValueError("minhash_threshold must be within (0, 1]")
         if self.embedding_threshold <= 0.0 or self.embedding_threshold > 1.0:
@@ -218,7 +218,9 @@ class DeduplicationOrchestrator:
                         continue
 
                     partition_group_count = len(candidate_groups)
-                    partition_group_size_sum = sum(len(group.fact_ids) for group in candidate_groups)
+                    partition_group_size_sum = sum(
+                        len(group.fact_ids) for group in candidate_groups
+                    )
 
                     logger.info(
                         "Evaluating %d candidate groups (avg size %.1f) for partition %s/%s",
@@ -238,7 +240,9 @@ class DeduplicationOrchestrator:
                     for group in candidate_groups:
                         self._log_group_preview(group, facts_lookup)
                         try:
-                            canonical_facts = llm_client.generate_canonical_facts(group, facts_lookup)
+                            canonical_facts = llm_client.generate_canonical_facts(
+                                group, facts_lookup
+                            )
                         except Exception as exc:  # noqa: BLE001 - surface all issues
                             logger.exception(
                                 "LLM processing failed for partition %s/%s: %s",
@@ -249,7 +253,9 @@ class DeduplicationOrchestrator:
                             partition_failed = True
                             break
 
-                        source_facts = [facts_lookup[fact_id] for fact_id in group.sorted_fact_ids()]
+                        source_facts = [
+                            facts_lookup[fact_id] for fact_id in group.sorted_fact_ids()
+                        ]
                         similarity_payload = {
                             method: [pair.as_tuple() for pair in pairs]
                             for method, pairs in group.similarity.items()
@@ -424,9 +430,7 @@ class DeduplicationOrchestrator:
         new_group = CandidateGroup(partition=base_group.partition, fact_ids=fact_set)
         for method, pairs in base_group.similarity.items():
             filtered = [
-                pair
-                for pair in pairs
-                if pair.source_id in fact_set and pair.target_id in fact_set
+                pair for pair in pairs if pair.source_id in fact_set and pair.target_id in fact_set
             ]
             if filtered:
                 new_group.add_similarity(method, filtered)
@@ -511,8 +515,7 @@ class DeduplicationOrchestrator:
             return
 
         similarity_counts = {
-            method: len(pairs)
-            for method, pairs in sorted(group.similarity.items())
+            method: len(pairs) for method, pairs in sorted(group.similarity.items())
         }
         sources = [method for method, count in similarity_counts.items() if count]
         if not sources:

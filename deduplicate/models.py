@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any
 
 from ie.types import FactType
 
@@ -40,11 +41,11 @@ class SimilarityPair:
     target_id: int
     score: float
 
-    def as_tuple(self) -> Tuple[int, int, float]:
+    def as_tuple(self) -> tuple[int, int, float]:
         return (self.source_id, self.target_id, self.score)
 
 
-SimilarityMatrix = Dict[str, List[SimilarityPair]]
+SimilarityMatrix = dict[str, list[SimilarityPair]]
 
 
 @dataclass(slots=True)
@@ -53,7 +54,7 @@ class CandidateGroup:
     fact_ids: set[int]
     similarity: SimilarityMatrix = field(default_factory=dict)
 
-    def sorted_fact_ids(self) -> List[int]:
+    def sorted_fact_ids(self) -> list[int]:
         return sorted(self.fact_ids)
 
     def add_similarity(self, method: str, pairs: Iterable[SimilarityPair]) -> None:
@@ -109,8 +110,5 @@ class PersistenceOutcome:
     deleted_fact_ids: list[int]
 
 
-def flatten_similarity(similarity: SimilarityMatrix) -> Dict[str, List[Tuple[int, int, float]]]:
-    return {
-        method: [pair.as_tuple() for pair in pairs]
-        for method, pairs in similarity.items()
-    }
+def flatten_similarity(similarity: SimilarityMatrix) -> dict[str, list[tuple[int, int, float]]]:
+    return {method: [pair.as_tuple() for pair in pairs] for method, pairs in similarity.items()}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -18,7 +18,6 @@ from .llm import LLMClient
 from .models import HealthResponse, RetrievalRequest, RetrievalResponse
 from .request_logger import RequestLogger
 from .tools import ToolContext, build_toolkit
-
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.embedding_provider = None
     app.state.tools = None
     app.state.agent = None
-    app.state.rate_limiter = RateLimiter(settings.rate_limit.requests, settings.rate_limit.window_seconds)
+    app.state.rate_limiter = RateLimiter(
+        settings.rate_limit.requests, settings.rate_limit.window_seconds
+    )
     app.state.request_logger = RequestLogger(settings.sqlite.db_path)
 
     @app.on_event("startup")
@@ -82,7 +83,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         root_logger = logging.getLogger()
         if not root_logger.handlers:
             handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+            handler.setFormatter(
+                logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+            )
             root_logger.addHandler(handler)
         root_logger.setLevel(log_level)
 
@@ -101,8 +104,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             module_logger.propagate = True
 
         logger.info("Starting memory agent service with log level: %s", cfg.api.log_level)
-        
-        driver_kwargs: dict[str, Any] = {"max_connection_lifetime": cfg.neo4j.max_connection_lifetime}
+
+        driver_kwargs: dict[str, Any] = {
+            "max_connection_lifetime": cfg.neo4j.max_connection_lifetime
+        }
         if cfg.neo4j.encrypted:
             driver_kwargs["encrypted"] = True
         driver = GraphDatabase.driver(
@@ -145,18 +150,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     async def get_agent(request: Request) -> MemoryAgent:
         if app.state.agent is None:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not ready")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not ready"
+            )
         limiter: RateLimiter = app.state.rate_limiter
         client_id = request.client.host if request.client else "unknown"
         if not limiter.allow(client_id):
-            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Rate limit exceeded"
+            )
         return app.state.agent
 
     @app.post("/api/memory/retrieve", response_model=RetrievalResponse)
     async def retrieve_memories(
         request: Request,
         request_body: RetrievalRequest,
-        agent: MemoryAgent = Depends(get_agent),
+        agent: Annotated[MemoryAgent, Depends(get_agent)],
     ) -> RetrievalResponse:
         request_id = uuid4().hex
         client_ip = request.client.host if request.client else None
@@ -174,7 +183,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return response
         except HTTPException as exc:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
-            request_logger.log_request_error(request_id, exc.status_code, str(exc.detail), duration_ms)
+            request_logger.log_request_error(
+                request_id, exc.status_code, str(exc.detail), duration_ms
+            )
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("Memory retrieval failed: %s", exc)
@@ -182,14 +193,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request_logger.log_request_error(
                 request_id, status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc), duration_ms
             )
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
 
     if settings.api.enable_debug_endpoint:
 
         @app.post("/api/memory/retrieve/debug")
         async def retrieve_memories_debug(
             request_body: RetrievalRequest,
-            agent: MemoryAgent = Depends(get_agent),
+            agent: Annotated[MemoryAgent, Depends(get_agent)],
         ) -> dict:
             try:
                 result = await agent.run(request_body, debug_mode=True)
@@ -205,7 +218,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Memory retrieval debug failed: %s", exc)
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+                ) from exc
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:

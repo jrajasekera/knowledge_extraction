@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 from neo4j import Driver, Session
 from tqdm import tqdm
 
 from constants import EMBEDDING_VECTOR_DIMENSIONS
+
 from .embedding_utils import chunk_iterable, sanitize_array, sanitize_evidence, serialize_attributes
 from .embeddings import EmbeddingProvider
 from .fact_formatter import format_fact_for_embedding_text
-
 
 logger = logging.getLogger(__name__)
 
@@ -213,50 +214,52 @@ def generate_embeddings(
     else:
         # Parallel processing with multiple workers
         logger.info("Processing %d batches with %d workers", len(batches), workers)
-        with tqdm(
-            total=len(facts),
-            desc="Embedding facts",
-            unit="fact",
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-        ) as pbar:
-            with ProcessPoolExecutor(max_workers=workers) as executor:
-                # Submit all batches
-                futures = {
-                    executor.submit(
-                        _embed_fact_batch,
-                        batch,
-                        provider.model_name,
-                        provider.device,
-                        provider.cache_dir,
-                    ): batch_idx
-                    for batch_idx, batch in enumerate(batches)
-                }
+        with (
+            tqdm(
+                total=len(facts),
+                desc="Embedding facts",
+                unit="fact",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            ) as pbar,
+            ProcessPoolExecutor(max_workers=workers) as executor,
+        ):
+            # Submit all batches
+            futures = {
+                executor.submit(
+                    _embed_fact_batch,
+                    batch,
+                    provider.model_name,
+                    provider.device,
+                    provider.cache_dir,
+                ): batch_idx
+                for batch_idx, batch in enumerate(batches)
+            }
 
-                # Collect results as they complete
-                for future in as_completed(futures):
-                    batch_idx = futures[future]
-                    try:
-                        results = future.result()
-                        for fact, text, embedding in results:
-                            rows.append(
-                                {
-                                    "fact_id": fact.fact_id,
-                                    "person_id": fact.person_id,
-                                    "person_name": fact.person_name,
-                                    "fact_type": fact.fact_type,
-                                    "fact_object": fact.fact_object,
-                                    "attributes_json": serialize_attributes(fact.attributes),
-                                    "confidence": fact.confidence,
-                                    "evidence": sanitize_evidence(fact.evidence),
-                                    "target_labels": sanitize_array(fact.target_labels),
-                                    "text": text,
-                                    "embedding": embedding,
-                                }
-                            )
-                        pbar.update(len(results))
-                    except Exception as exc:
-                        logger.error("Batch %d failed with error: %s", batch_idx, exc)
-                        raise
+            # Collect results as they complete
+            for future in as_completed(futures):
+                batch_idx = futures[future]
+                try:
+                    results = future.result()
+                    for fact, text, embedding in results:
+                        rows.append(
+                            {
+                                "fact_id": fact.fact_id,
+                                "person_id": fact.person_id,
+                                "person_name": fact.person_name,
+                                "fact_type": fact.fact_type,
+                                "fact_object": fact.fact_object,
+                                "attributes_json": serialize_attributes(fact.attributes),
+                                "confidence": fact.confidence,
+                                "evidence": sanitize_evidence(fact.evidence),
+                                "target_labels": sanitize_array(fact.target_labels),
+                                "text": text,
+                                "embedding": embedding,
+                            }
+                        )
+                    pbar.update(len(results))
+                except Exception as exc:
+                    logger.error("Batch %d failed with error: %s", batch_idx, exc)
+                    raise
 
     logger.info("Generated embeddings for %d facts", len(rows))
     return rows

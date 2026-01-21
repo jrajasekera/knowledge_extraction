@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-from typing import Sequence
+from collections.abc import Sequence
 
 from data_structures.ingestion import normalize_iso_timestamp
+
 from .models import CanonicalFact, FactRecord, PersistenceOutcome
 
 logger = logging.getLogger(__name__)

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterable, Sequence
+from contextlib import suppress
 
 import httpx
 
 from ie.client import LlamaServerClient, LlamaServerConfig
 
-from ..models import CanonicalFact, CandidateGroup, FactRecord
+from ..models import CandidateGroup, CanonicalFact, FactRecord
 from .parser import CanonicalFactsParser
 from .prompts import build_messages
 
@@ -33,7 +33,7 @@ class DeduplicationLLMClient:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "DeduplicationLLMClient":
+    def __enter__(self) -> DeduplicationLLMClient:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -56,7 +56,7 @@ class DeduplicationLLMClient:
                 attempt += 1
                 if attempt >= self._max_retries:
                     raise
-                delay = self._backoff_base ** attempt
+                delay = self._backoff_base**attempt
                 logger.warning("LLM HTTP error: %s. Retrying in %.1fs", exc, delay)
                 time.sleep(delay)
                 continue
@@ -74,12 +74,10 @@ class DeduplicationLLMClient:
                 attempt += 1
                 if attempt >= self._max_retries:
                     raise
-                delay = self._backoff_base ** attempt
+                delay = self._backoff_base**attempt
                 logger.warning("LLM parse failure: %s. Retrying in %.1fs", exc, delay)
                 time.sleep(delay)
 
     def __del__(self) -> None:
-        try:
+        with suppress(Exception):  # pragma: no cover - best effort
             self.close()
-        except Exception:  # pragma: no cover - best effort
-            pass

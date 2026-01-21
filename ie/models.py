@@ -28,16 +28,17 @@ class ExtractionFact(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def _high_confidence_requires_notes(self) -> "ExtractionFact":
-        if self.confidence >= 0.8:
-            if not self.notes or not self.notes.strip():
-                raise ValueError("facts with confidence ≥ 0.8 must include reasoning notes")
+    def _high_confidence_requires_notes(self) -> ExtractionFact:
+        if self.confidence >= 0.8 and (not self.notes or not self.notes.strip()):
+            raise ValueError("facts with confidence ≥ 0.8 must include reasoning notes")
         return self
 
     @model_validator(mode="after")
-    def _very_high_confidence_requires_evidence(self) -> "ExtractionFact":
+    def _very_high_confidence_requires_evidence(self) -> ExtractionFact:
         if self.confidence >= 0.9 and len(self.evidence) == 0:
-            raise ValueError("facts with confidence ≥ 0.9 must include at least one evidence message")
+            raise ValueError(
+                "facts with confidence ≥ 0.9 must include at least one evidence message"
+            )
         return self
 
 

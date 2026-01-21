@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from neo4j import Driver, Session
 from tqdm import tqdm
 
 from constants import EMBEDDING_VECTOR_DIMENSIONS
+
 from .embedding_utils import chunk_iterable
 from .embeddings import EmbeddingProvider
 from .message_formatter import format_message_for_embedding_text
-
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,9 @@ def _stringify(value: Any) -> str | None:
     return str(value)
 
 
-def _sanitize_mentions(raw_mentions: Sequence[dict[str, Any]] | None) -> list[dict[str, str | None]]:
+def _sanitize_mentions(
+    raw_mentions: Sequence[dict[str, Any]] | None,
+) -> list[dict[str, str | None]]:
     sanitized: list[dict[str, str | None]] = []
     for entry in raw_mentions or []:
         mention_id = entry.get("id")
@@ -212,7 +215,9 @@ def fetch_graph_messages(session: Session) -> list[GraphMessage]:
                 guild_name=data.get("guild_name"),
                 timestamp=_stringify_timestamp(data.get("timestamp")),
                 edited_timestamp=_stringify_timestamp(data.get("edited_timestamp")),
-                is_pinned=bool(data.get("is_pinned")) if data.get("is_pinned") is not None else None,
+                is_pinned=bool(data.get("is_pinned"))
+                if data.get("is_pinned") is not None
+                else None,
                 message_type=data.get("message_type"),
                 mentions=mentions,
                 attachments=attachments,
@@ -355,36 +360,38 @@ def generate_message_embeddings(
     else:
         # Parallel processing with multiple workers
         logger.info("Processing %d batches with %d workers", len(batches), workers)
-        with tqdm(
-            total=total_messages,
-            desc="Embedding messages",
-            unit="msg",
-            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-        ) as pbar:
-            with ProcessPoolExecutor(max_workers=workers) as executor:
-                # Submit all batches
-                futures = {
-                    executor.submit(
-                        _embed_message_batch,
-                        batch,
-                        provider.model_name,
-                        provider.device,
-                        provider.cache_dir,
-                    ): (batch_idx, len(batch))
-                    for batch_idx, batch in enumerate(batches)
-                }
+        with (
+            tqdm(
+                total=total_messages,
+                desc="Embedding messages",
+                unit="msg",
+                bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            ) as pbar,
+            ProcessPoolExecutor(max_workers=workers) as executor,
+        ):
+            # Submit all batches
+            futures = {
+                executor.submit(
+                    _embed_message_batch,
+                    batch,
+                    provider.model_name,
+                    provider.device,
+                    provider.cache_dir,
+                ): (batch_idx, len(batch))
+                for batch_idx, batch in enumerate(batches)
+            }
 
-                # Collect results as they complete
-                for future in as_completed(futures):
-                    batch_idx, batch_size = futures[future]
-                    try:
-                        results = future.result()
-                        for message, clean_text, embedding in results:
-                            rows.append(_build_row(message, clean_text, embedding))
-                        pbar.update(batch_size)
-                    except Exception as exc:
-                        logger.error("Batch %d failed with error: %s", batch_idx, exc)
-                        raise
+            # Collect results as they complete
+            for future in as_completed(futures):
+                batch_idx, batch_size = futures[future]
+                try:
+                    results = future.result()
+                    for message, clean_text, embedding in results:
+                        rows.append(_build_row(message, clean_text, embedding))
+                    pbar.update(batch_size)
+                except Exception as exc:
+                    logger.error("Batch %d failed with error: %s", batch_idx, exc)
+                    raise
 
         skipped = total_messages - len(rows)
         return rows, skipped
@@ -488,7 +495,9 @@ def run_message_embedding_pipeline(
         logger.info("No messages available; skipping embedding generation")
         return summary
 
-    rows, skipped = generate_message_embeddings(messages, provider, batch_size=batch_size, workers=workers)
+    rows, skipped = generate_message_embeddings(
+        messages, provider, batch_size=batch_size, workers=workers
+    )
     summary["skipped_empty"] = skipped
     summary["messages_embedded"] = len(rows)
 

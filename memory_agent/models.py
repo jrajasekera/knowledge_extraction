@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, HttpUrl, ValidationInfo, computed_field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    HttpUrl,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 ConfidenceLevel = Literal["high", "medium", "low"]
 
@@ -144,7 +152,7 @@ class RetrievedFact(BaseModel):
         raise TypeError(msg)
 
     @model_validator(mode="after")
-    def _ensure_person_name(self) -> "RetrievedFact":
+    def _ensure_person_name(self) -> RetrievedFact:
         if not self.person_name:
             msg = "person_name is required"
             raise ValueError(msg)

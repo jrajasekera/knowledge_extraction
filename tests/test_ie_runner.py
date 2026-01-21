@@ -3,9 +3,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import ie.runner as ie_runner
 import pytest
-from ie import IEConfig, run_ie_job, reset_ie_progress
+
+import ie.runner as ie_runner
+from ie import IEConfig, reset_ie_progress, run_ie_job
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema.sql"
 
@@ -20,9 +21,7 @@ def _build_sample_db(tmp_path: Path, message_count: int = 3) -> Path:
             " VALUES (1, 'test.json', '2025-01-01T00:00:00Z', ?, ?)",
             (message_count, message_count),
         )
-        conn.execute(
-            "INSERT INTO guild (id, name) VALUES ('g1', 'Guild 1')"
-        )
+        conn.execute("INSERT INTO guild (id, name) VALUES ('g1', 'Guild 1')")
         conn.execute(
             "INSERT INTO channel (id, guild_id, type, category, name) VALUES ('c1', 'g1', 'text', 'general', 'General')"
         )
@@ -70,7 +69,7 @@ def test_run_ie_job_skips_cached_windows(tmp_path: Path, monkeypatch: pytest.Mon
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "CountingClient":
+        def __enter__(self) -> CountingClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
@@ -97,7 +96,7 @@ def test_run_ie_job_skips_cached_windows(tmp_path: Path, monkeypatch: pytest.Mon
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "SilentClient":
+        def __enter__(self) -> SilentClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
@@ -129,7 +128,7 @@ def test_run_ie_job_force_reprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "PrimingClient":
+        def __enter__(self) -> PrimingClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
@@ -153,7 +152,7 @@ def test_run_ie_job_force_reprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "ForcedClient":
+        def __enter__(self) -> ForcedClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
@@ -182,7 +181,7 @@ def test_reset_ie_cache_clears_state(tmp_path: Path, monkeypatch: pytest.MonkeyP
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "PrimingClient":
+        def __enter__(self) -> PrimingClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
@@ -207,7 +206,7 @@ def test_reset_ie_cache_clears_state(tmp_path: Path, monkeypatch: pytest.MonkeyP
         def __init__(self, config) -> None:
             self.config = config
 
-        def __enter__(self) -> "RefreshClient":
+        def __enter__(self) -> RefreshClient:
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]

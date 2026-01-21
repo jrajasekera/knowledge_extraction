@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Mapping, Sequence
 
 from .config import FACT_DEFINITION_INDEX
 from .prompts import build_participant_glossary
@@ -91,17 +91,17 @@ def build_enhanced_prompt(
         "Return ONLY valid JSON matching this schema:",
         "```json",
         "{",
-        "  \"facts\": [",
+        '  "facts": [',
         "    {",
-        "      \"type\": \"<FactType>\"",
-        "      \"subject_id\": \"<exact_discord_id>\"",
-        "      \"object_label\": \"<human_readable_name>\"",
-        "      \"object_id\": \"<optional_stable_id>\"",
-        "      \"attributes\": { \"key\": \"value\" }",
-        "      \"confidence\": 0.0",
-        "      \"evidence\": [\"<message_id>\"],",
-        "      \"timestamp\": \"<ISO8601>\"",
-        "      \"notes\": \"<optional_reasoning>\"",
+        '      "type": "<FactType>"',
+        '      "subject_id": "<exact_discord_id>"',
+        '      "object_label": "<human_readable_name>"',
+        '      "object_id": "<optional_stable_id>"',
+        '      "attributes": { "key": "value" }',
+        '      "confidence": 0.0',
+        '      "evidence": ["<message_id>"],',
+        '      "timestamp": "<ISO8601>"',
+        '      "notes": "<optional_reasoning>"',
         "    }",
         "  ]",
         "}",

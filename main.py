@@ -32,7 +32,12 @@ def _print_stats(bundle: ConversationExport) -> None:
     print("Reported messages:", bundle.message_count)
     print("Loaded messages:", message_count)
     print("Unique authors:", len(authors))
-    print("Time span:", _format_dt(first_message.timestamp if first_message else None), "→", _format_dt(last_message.timestamp if last_message else None))
+    print(
+        "Time span:",
+        _format_dt(first_message.timestamp if first_message else None),
+        "→",
+        _format_dt(last_message.timestamp if last_message else None),
+    )
     print("Total attachments:", attachment_total)
     print("Total embeds:", embed_total)
     if reaction_counts:

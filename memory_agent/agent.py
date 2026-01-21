@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable, Dict, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import END, StateGraph
 from pydantic import ValidationError
 
 from .config import AgentConfig
@@ -20,7 +21,6 @@ from .state import AgentState
 from .tools import ToolBase
 from .tools.base import ToolError
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +29,7 @@ class MemoryAgent:
 
     def __init__(
         self,
-        tools: Dict[str, ToolBase],
+        tools: dict[str, ToolBase],
         config: AgentConfig,
         llm: LLMClient | None = None,
     ) -> None:
@@ -101,14 +101,18 @@ class MemoryAgent:
         if debug_mode:
             result["debug"] = {
                 "reasoning_trace": final_state.get("reasoning_trace", []),
-                "retrieved_facts": [fact.model_dump() for fact in final_state.get("retrieved_facts", [])],
-                "retrieved_messages": [msg.model_dump() for msg in final_state.get("retrieved_messages", [])],
+                "retrieved_facts": [
+                    fact.model_dump() for fact in final_state.get("retrieved_facts", [])
+                ],
+                "retrieved_messages": [
+                    msg.model_dump() for msg in final_state.get("retrieved_messages", [])
+                ],
             }
         return result
 
 
 def create_memory_agent_graph(
-    tools: Dict[str, ToolBase],
+    tools: dict[str, ToolBase],
     llm: LLMClient | None,
     config: AgentConfig,
 ):
@@ -140,7 +144,9 @@ def create_memory_agent_graph(
             "reasoning_trace": trace,
         }
 
-    def determine_tool_from_goal(state: AgentState, preferred_tool: str | None = None) -> dict[str, Any] | None:
+    def determine_tool_from_goal(
+        state: AgentState, preferred_tool: str | None = None
+    ) -> dict[str, Any] | None:
         conversation_text = " ".join(msg.content for msg in state["conversation"]).lower()
 
         def build_semantic_search() -> dict[str, Any] | None:
@@ -169,7 +175,9 @@ def create_memory_agent_graph(
                     if not payload:
                         payload = fallback_payload(name)
                         if payload:
-                            logger.info("Using fallback payload for LLM-selected tool %s: %s", name, payload)
+                            logger.info(
+                                "Using fallback payload for LLM-selected tool %s: %s", name, payload
+                            )
                     if payload:
                         return {"name": name, "input": payload}
                     logger.info("No payload available for LLM-selected tool %s", name)
@@ -282,7 +290,11 @@ def create_memory_agent_graph(
                                 tool_name,
                                 parameters,
                                 conversation_context,
-                                [call for call in state.get("tool_calls", []) if call.get("name") == tool_name],
+                                [
+                                    call
+                                    for call in state.get("tool_calls", [])
+                                    if call.get("name") == tool_name
+                                ],
                                 retrieved_facts=state.get("retrieved_facts", []),
                             )
                             refined_parameters = refinement.get("refined_parameters")
@@ -318,7 +330,10 @@ def create_memory_agent_graph(
                                 )
                                 if extracted_queries:
                                     parameters["queries"] = extracted_queries
-                                    logger.info("LLM produced %d fact search queries", len(extracted_queries))
+                                    logger.info(
+                                        "LLM produced %d fact search queries",
+                                        len(extracted_queries),
+                                    )
                             except Exception as exc:  # noqa: BLE001
                                 logger.info("Fact query extraction failed: %s", exc)
 
@@ -332,7 +347,10 @@ def create_memory_agent_graph(
                         if "adaptive_threshold" not in parameters:
                             parameters["adaptive_threshold"] = True
 
-                        if parameters.get("adaptive_threshold") and "similarity_threshold" in parameters:
+                        if (
+                            parameters.get("adaptive_threshold")
+                            and "similarity_threshold" in parameters
+                        ):
                             parameters.pop("similarity_threshold", None)
 
                     candidate = {"name": tool_name, "input": parameters}
@@ -357,7 +375,9 @@ def create_memory_agent_graph(
             "pending_tool": candidate,
             "llm_reasoning": llm_reasoning_updates,
             "reasoning_trace": update_reasoning(state, reasoning_message),
-            "tool_selection_confidence": "low" if candidate else state.get("tool_selection_confidence", "low"),
+            "tool_selection_confidence": "low"
+            if candidate
+            else state.get("tool_selection_confidence", "low"),
         }
 
     def execute_tool(state: AgentState) -> AgentState:
@@ -463,7 +483,11 @@ def create_memory_agent_graph(
             # Store best result count for each query
             query_results_map[q] = max(query_results_map.get(q, 0), result_count)
 
-        reasoning_msg = f"Tool {tool_name} returned {len(meaningful_facts)} actionable facts." if facts else f"Tool {tool_name} returned 0 facts."
+        reasoning_msg = (
+            f"Tool {tool_name} returned {len(meaningful_facts)} actionable facts."
+            if facts
+            else f"Tool {tool_name} returned 0 facts."
+        )
         return {
             "retrieved_facts": retrieved,
             "tool_calls": tool_calls,
@@ -495,13 +519,14 @@ def create_memory_agent_graph(
         if stop_decision and stop_decision.get("should_continue") is False:
             goal_accomplished = True
         reasoning_msg = (
-            "Goal satisfied with new facts."
-            if goal_accomplished
-            else "Goal not yet satisfied."
+            "Goal satisfied with new facts." if goal_accomplished else "Goal not yet satisfied."
         )
         trace = update_reasoning(state, reasoning_msg)
         if stop_decision and stop_decision.get("should_continue") is False:
-            trace = update_reasoning({"reasoning_trace": trace}, f"LLM advised stopping: {stop_decision.get('reasoning', 'no reasoning provided')}")
+            trace = update_reasoning(
+                {"reasoning_trace": trace},
+                f"LLM advised stopping: {stop_decision.get('reasoning', 'no reasoning provided')}",
+            )
         logger.info(
             "Goal accomplished: %s after tool call %s",
             goal_accomplished,
@@ -534,7 +559,9 @@ def create_memory_agent_graph(
 
                 if llm and conversation:
                     try:
-                        queries = await llm.extract_message_search_queries(conversation, max_queries=15)
+                        queries = await llm.extract_message_search_queries(
+                            conversation, max_queries=15
+                        )
                         if queries:
                             logger.info("LLM produced %d message search queries", len(queries))
                     except Exception as exc:  # noqa: BLE001
@@ -563,7 +590,8 @@ def create_memory_agent_graph(
                         result = tool(search_input.model_dump())
                         formatted_messages = format_messages(result.results)
                         logger.info(
-                            "Retrieved %d messages from semantic_search_messages", len(formatted_messages)
+                            "Retrieved %d messages from semantic_search_messages",
+                            len(formatted_messages),
                         )
                     except Exception as exc:  # noqa: BLE001
                         logger.error("Message retrieval failed: %s", exc, exc_info=True)
@@ -608,7 +636,9 @@ def create_memory_agent_graph(
 
     workflow.set_entry_point("analyze_conversation")
     workflow.add_edge("analyze_conversation", "plan_queries")
-    workflow.add_conditional_edges("plan_queries", should_continue, {"continue": "execute_tool", "finish": "synthesize"})
+    workflow.add_conditional_edges(
+        "plan_queries", should_continue, {"continue": "execute_tool", "finish": "synthesize"}
+    )
     workflow.add_edge("execute_tool", "evaluate_progress")
     workflow.add_conditional_edges(
         "evaluate_progress",
@@ -657,9 +687,7 @@ def detect_tool_loop(tool_calls: Iterable[dict[str, Any]]) -> bool:
         return False
     recent = calls[-3:]
     names = {call.get("name") for call in recent}
-    if len(names) == 1 and all(call.get("result_count", 0) == 0 for call in recent):
-        return True
-    return False
+    return len(names) == 1 and all(call.get("result_count", 0) == 0 for call in recent)
 
 
 def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
@@ -679,7 +707,6 @@ def compute_confidence(facts: list[RetrievedFact], state: AgentState) -> str:
     if success_rate >= 0.4 and (high_conf >= 1 or len(facts) >= 2 or avg_confidence >= 0.6):
         return "medium"
     return "low"
-
 
 
 def extract_topic(text: str) -> str | None:

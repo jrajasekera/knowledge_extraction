@@ -17,34 +17,108 @@ def parse_args() -> argparse.Namespace:
     default_llm = LlamaServerConfig()
     default_embedding_model = os.getenv("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
     parser = argparse.ArgumentParser(description="Deduplicate IE facts in SQLite.")
-    parser.add_argument("--sqlite", type=Path, default=Path("./discord.db"), help="Path to SQLite database.")
+    parser.add_argument(
+        "--sqlite", type=Path, default=Path("./discord.db"), help="Path to SQLite database."
+    )
     parser.add_argument("--neo4j-uri", default="bolt://localhost:7687", help="Neo4j bolt URI.")
     parser.add_argument("--neo4j-user", default="neo4j", help="Neo4j username.")
     parser.add_argument("--neo4j-password", required=True, help="Neo4j password.")
-    parser.add_argument("--minhash-threshold", type=float, default=0.80, help="Jaccard threshold for MinHash LSH.")
-    parser.add_argument("--minhash-num-perm", type=int, default=128, help="Number of MinHash permutations.")
-    parser.add_argument("--minhash-ngram-size", type=int, default=3, help="Character n-gram size for MinHash tokens.")
-    parser.add_argument("--embedding-model", default=default_embedding_model, help="SentenceTransformer embedding model name.")
-    parser.add_argument("--embedding-threshold", type=float, default=0.95, help="Cosine similarity threshold for embeddings.")
-    parser.add_argument("--embedding-batch-size", type=int, default=32, help="Embedding encoder batch size.")
-    parser.add_argument("--embedding-device", help="Force embedding model device (e.g. cuda or cpu).", default="cpu")
-    parser.add_argument("--embedding-max-neighbors", type=int, default=25, help="Maximum embedding neighbors per fact before dedup union.")
-    parser.add_argument("--min-confidence", type=float, default=0.5, help="Minimum fact confidence to consider for deduplication.")
-    parser.add_argument("--max-partitions", type=int, help="Process at most N partitions (useful for testing).")
-    parser.add_argument("--resume", action="store_true", help="Resume the most recent running/paused deduplication run.")
-    parser.add_argument("--dry-run", action="store_true", help="Run without persisting changes or updating Neo4j.")
-    parser.add_argument("--graph-delete-batch-size", type=int, default=100, help="Batch size when deleting old Neo4j relationships.")
-    parser.add_argument("--max-group-size", type=int, default=10, help="Maximum fact count sent to the LLM per candidate group.")
-    parser.add_argument("--no-progress-bar", action="store_true", help="Disable the interactive progress display.")
-    parser.add_argument("--llm-base-url", default=default_llm.base_url, help="LLM endpoint base URL.")
+    parser.add_argument(
+        "--minhash-threshold", type=float, default=0.80, help="Jaccard threshold for MinHash LSH."
+    )
+    parser.add_argument(
+        "--minhash-num-perm", type=int, default=128, help="Number of MinHash permutations."
+    )
+    parser.add_argument(
+        "--minhash-ngram-size",
+        type=int,
+        default=3,
+        help="Character n-gram size for MinHash tokens.",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=default_embedding_model,
+        help="SentenceTransformer embedding model name.",
+    )
+    parser.add_argument(
+        "--embedding-threshold",
+        type=float,
+        default=0.95,
+        help="Cosine similarity threshold for embeddings.",
+    )
+    parser.add_argument(
+        "--embedding-batch-size", type=int, default=32, help="Embedding encoder batch size."
+    )
+    parser.add_argument(
+        "--embedding-device", help="Force embedding model device (e.g. cuda or cpu).", default="cpu"
+    )
+    parser.add_argument(
+        "--embedding-max-neighbors",
+        type=int,
+        default=25,
+        help="Maximum embedding neighbors per fact before dedup union.",
+    )
+    parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.5,
+        help="Minimum fact confidence to consider for deduplication.",
+    )
+    parser.add_argument(
+        "--max-partitions", type=int, help="Process at most N partitions (useful for testing)."
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the most recent running/paused deduplication run.",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Run without persisting changes or updating Neo4j."
+    )
+    parser.add_argument(
+        "--graph-delete-batch-size",
+        type=int,
+        default=100,
+        help="Batch size when deleting old Neo4j relationships.",
+    )
+    parser.add_argument(
+        "--max-group-size",
+        type=int,
+        default=10,
+        help="Maximum fact count sent to the LLM per candidate group.",
+    )
+    parser.add_argument(
+        "--no-progress-bar", action="store_true", help="Disable the interactive progress display."
+    )
+    parser.add_argument(
+        "--llm-base-url", default=default_llm.base_url, help="LLM endpoint base URL."
+    )
     parser.add_argument("--llm-model", default=default_llm.model, help="LLM model name.")
-    parser.add_argument("--llm-timeout", type=float, default=default_llm.timeout, help="LLM request timeout in seconds.")
-    parser.add_argument("--llm-temperature", type=float, default=default_llm.temperature, help="LLM sampling temperature.")
-    parser.add_argument("--llm-top-p", type=float, default=default_llm.top_p, help="LLM nucleus sampling top_p.")
-    parser.add_argument("--llm-max-tokens", type=int, default=default_llm.max_tokens, help="LLM max token count.")
+    parser.add_argument(
+        "--llm-timeout",
+        type=float,
+        default=default_llm.timeout,
+        help="LLM request timeout in seconds.",
+    )
+    parser.add_argument(
+        "--llm-temperature",
+        type=float,
+        default=default_llm.temperature,
+        help="LLM sampling temperature.",
+    )
+    parser.add_argument(
+        "--llm-top-p", type=float, default=default_llm.top_p, help="LLM nucleus sampling top_p."
+    )
+    parser.add_argument(
+        "--llm-max-tokens", type=int, default=default_llm.max_tokens, help="LLM max token count."
+    )
     parser.add_argument("--llm-api-key", help="Optional API key for the LLM service.")
-    parser.add_argument("--llm-max-retries", type=int, default=3, help="Max LLM retries per candidate group.")
-    parser.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR).")
+    parser.add_argument(
+        "--llm-max-retries", type=int, default=3, help="Max LLM retries per candidate group."
+    )
+    parser.add_argument(
+        "--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)."
+    )
     return parser.parse_args()
 
 

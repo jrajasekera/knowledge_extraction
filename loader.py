@@ -7,11 +7,12 @@
 import argparse
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from neo4j import GraphDatabase
 
 from db_utils import get_sqlite_connection
+
 
 def batched(cursor: sqlite3.Cursor, fetchsize: int):
     while True:
@@ -20,8 +21,10 @@ def batched(cursor: sqlite3.Cursor, fetchsize: int):
             break
         yield rows
 
-def run_cypher(tx, query: str, params: Dict[str, Any] | None = None):
+
+def run_cypher(tx, query: str, params: dict[str, Any] | None = None):
     tx.run(query, params or {})
+
 
 CONSTRAINTS = [
     "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (n:Person)   REQUIRE n.id IS UNIQUE",
@@ -110,57 +113,102 @@ SET e.title=$title, e.url=$url, e.description=$description, e.timestamp=$timesta
 MERGE (m)-[:HAS_EMBED]->(e)
 """
 
+
 def load_guilds(cur, driver):
     cur.execute("SELECT id, name, icon_url FROM guild")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
-            def txfun(tx):
-                for (gid, name, icon) in rows:
-                    run_cypher(tx, MERGE_GUILD, {"id":gid, "name":name, "icon_url":icon})
+
+            def txfun(tx, rows=rows):
+                for gid, name, icon in rows:
+                    run_cypher(tx, MERGE_GUILD, {"id": gid, "name": name, "icon_url": icon})
+
             sess.execute_write(txfun)
+
 
 def load_channels(cur, driver):
     cur.execute("SELECT id, guild_id, type, category, name, topic FROM channel")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
-            def txfun(tx):
-                for (cid, gid, typ, cat, name, topic) in rows:
-                    run_cypher(tx, MERGE_CHANNEL, {
-                        "id":cid, "guild_id":gid, "type":typ, "category":cat, "name":name, "topic":topic
-                    })
+
+            def txfun(tx, rows=rows):
+                for cid, gid, typ, cat, name, topic in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_CHANNEL,
+                        {
+                            "id": cid,
+                            "guild_id": gid,
+                            "type": typ,
+                            "category": cat,
+                            "name": name,
+                            "topic": topic,
+                        },
+                    )
+
             sess.execute_write(txfun)
 
+
 def load_members(cur, driver):
-    cur.execute("SELECT id, name, discriminator, nickname, official_name, color_hex, is_bot, avatar_url FROM member")
+    cur.execute(
+        "SELECT id, name, discriminator, nickname, official_name, color_hex, is_bot, avatar_url FROM member"
+    )
     with driver.session() as sess:
         for rows in batched(cur, 1000):
-            def txfun(tx):
-                for (pid, name, disc, nick, official_name, color, is_bot, avatar) in rows:
-                    run_cypher(tx, MERGE_MEMBER, {
-                        "id":pid, "name":name, "discriminator":disc, "nickname":nick,
-                        "official_name":official_name, "color_hex":color, "is_bot":bool(is_bot), "avatar_url":avatar
-                    })
+
+            def txfun(tx, rows=rows):
+                for pid, name, disc, nick, official_name, color, is_bot, avatar in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_MEMBER,
+                        {
+                            "id": pid,
+                            "name": name,
+                            "discriminator": disc,
+                            "nickname": nick,
+                            "official_name": official_name,
+                            "color_hex": color,
+                            "is_bot": bool(is_bot),
+                            "avatar_url": avatar,
+                        },
+                    )
+
             sess.execute_write(txfun)
+
 
 def load_roles(cur, driver):
     cur.execute("SELECT id, guild_id, name, color_hex, position FROM role")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
-            def txfun(tx):
-                for (rid, gid, name, color, pos) in rows:
-                    run_cypher(tx, MERGE_ROLE, {
-                        "id":rid, "guild_id":gid, "name":name, "color_hex":color, "position":pos
-                    })
+
+            def txfun(tx, rows=rows):
+                for rid, gid, name, color, pos in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_ROLE,
+                        {
+                            "id": rid,
+                            "guild_id": gid,
+                            "name": name,
+                            "color_hex": color,
+                            "position": pos,
+                        },
+                    )
+
             sess.execute_write(txfun)
+
 
 def load_member_roles(cur, driver):
     cur.execute("SELECT member_id, role_id FROM member_role")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
-            def txfun(tx):
-                for (mid, rid) in rows:
-                    run_cypher(tx, MERGE_MEMBER_ROLE, {"member_id":mid, "role_id":rid})
+
+            def txfun(tx, rows=rows):
+                for mid, rid in rows:
+                    run_cypher(tx, MERGE_MEMBER_ROLE, {"member_id": mid, "role_id": rid})
+
             sess.execute_write(txfun)
+
 
 def load_messages(cur, driver):
     cur.execute(
@@ -168,60 +216,109 @@ def load_messages(cur, driver):
     )
     with driver.session() as sess:
         for rows in batched(cur, 1000):
-            def txfun(tx):
-                for (mid, cid, gid, aid, typ, ts, edited, pinned, content) in rows:
-                    run_cypher(tx, MERGE_MESSAGE, {
-                        "id":mid, "channel_id":cid, "author_id":aid, "type":typ,
-                        "timestamp":ts, "edited":edited, "is_pinned":bool(pinned), "content":content
-                    })
+
+            def txfun(tx, rows=rows):
+                for mid, cid, _gid, aid, typ, ts, edited, pinned, content in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_MESSAGE,
+                        {
+                            "id": mid,
+                            "channel_id": cid,
+                            "author_id": aid,
+                            "type": typ,
+                            "timestamp": ts,
+                            "edited": edited,
+                            "is_pinned": bool(pinned),
+                            "content": content,
+                        },
+                    )
+
             sess.execute_write(txfun)
+
 
 def load_replies(cur, driver):
     cur.execute("SELECT message_id, ref_message_id FROM message_reference")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
-            def txfun(tx):
-                for (mid, ref_mid) in rows:
-                    run_cypher(tx, MERGE_REPLY, {"msg_id":mid, "ref_msg_id":ref_mid})
+
+            def txfun(tx, rows=rows):
+                for mid, ref_mid in rows:
+                    run_cypher(tx, MERGE_REPLY, {"msg_id": mid, "ref_msg_id": ref_mid})
+
             sess.execute_write(txfun)
+
 
 def load_mentions(cur, driver):
     cur.execute("SELECT message_id, member_id FROM message_mention")
     with driver.session() as sess:
         for rows in batched(cur, 5000):
-            def txfun(tx):
-                for (mid, pid) in rows:
-                    run_cypher(tx, MERGE_MENTION, {"msg_id":mid, "person_id":pid})
+
+            def txfun(tx, rows=rows):
+                for mid, pid in rows:
+                    run_cypher(tx, MERGE_MENTION, {"msg_id": mid, "person_id": pid})
+
             sess.execute_write(txfun)
+
 
 def load_reactions(cur, driver):
     # ensure emojis first (distinct by id+name pairs)
     cur.execute("SELECT DISTINCT emoji_id, emoji_name FROM reaction")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
-            def txfun(tx):
-                for (eid, ename) in rows:
-                    run_cypher(tx, MERGE_EMOJI, {
-                        "emoji_id":eid, "emoji_name":ename, "code":"", "is_animated":False, "image_url":None
-                    })
+
+            def txfun(tx, rows=rows):
+                for eid, ename in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_EMOJI,
+                        {
+                            "emoji_id": eid,
+                            "emoji_name": ename,
+                            "code": "",
+                            "is_animated": False,
+                            "image_url": None,
+                        },
+                    )
+
             sess.execute_write(txfun)
 
     cur.execute("SELECT message_id, emoji_id, emoji_name, count FROM reaction")
     with driver.session() as sess:
         for rows in batched(cur, 5000):
-            def txfun(tx):
-                for (mid, eid, ename, count) in rows:
-                    run_cypher(tx, MERGE_REACTION, {"msg_id":mid, "emoji_id":eid, "emoji_name":ename, "count":count})
+
+            def txfun(tx, rows=rows):
+                for mid, eid, ename, count in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_REACTION,
+                        {"msg_id": mid, "emoji_id": eid, "emoji_name": ename, "count": count},
+                    )
+
             sess.execute_write(txfun)
+
 
 def load_attachments(cur, driver):
     cur.execute("SELECT id, message_id, url, file_name, file_size_bytes FROM attachment")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
-            def txfun(tx):
-                for (att_id, mid, url, fname, size) in rows:
-                    run_cypher(tx, MERGE_ATTACHMENT, {"att_id":att_id, "msg_id":mid, "url":url, "file_name":fname, "size":size})
+
+            def txfun(tx, rows=rows):
+                for att_id, mid, url, fname, size in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_ATTACHMENT,
+                        {
+                            "att_id": att_id,
+                            "msg_id": mid,
+                            "url": url,
+                            "file_name": fname,
+                            "size": size,
+                        },
+                    )
+
             sess.execute_write(txfun)
+
 
 def load_embeds(cur, driver):
     cur.execute(
@@ -229,15 +326,49 @@ def load_embeds(cur, driver):
     )
     with driver.session() as sess:
         for rows in batched(cur, 2000):
-            def txfun(tx):
-                for (eid, mid, title, url, ts, desc, color, aname, aurl, th_url, th_w, th_h, vurl, vw, vh) in rows:
-                    run_cypher(tx, MERGE_EMBED, {
-                        "embed_id":eid, "msg_id":mid, "title":title, "url":url, "timestamp":ts,
-                        "description":desc, "color_hex":color, "author_name":aname, "author_url":aurl,
-                        "thumbnail_url":th_url, "thumbnail_w":th_w, "thumbnail_h":th_h,
-                        "video_url":vurl, "video_w":vw, "video_h":vh
-                    })
+
+            def txfun(tx, rows=rows):
+                for (
+                    eid,
+                    mid,
+                    title,
+                    url,
+                    ts,
+                    desc,
+                    color,
+                    aname,
+                    aurl,
+                    th_url,
+                    th_w,
+                    th_h,
+                    vurl,
+                    vw,
+                    vh,
+                ) in rows:
+                    run_cypher(
+                        tx,
+                        MERGE_EMBED,
+                        {
+                            "embed_id": eid,
+                            "msg_id": mid,
+                            "title": title,
+                            "url": url,
+                            "timestamp": ts,
+                            "description": desc,
+                            "color_hex": color,
+                            "author_name": aname,
+                            "author_url": aurl,
+                            "thumbnail_url": th_url,
+                            "thumbnail_w": th_w,
+                            "thumbnail_h": th_h,
+                            "video_url": vurl,
+                            "video_w": vw,
+                            "video_h": vh,
+                        },
+                    )
+
             sess.execute_write(txfun)
+
 
 def materialize_interactions(driver):
     # Replies weight 3; Mentions weight 1; then symmetrize.
@@ -286,17 +417,28 @@ def load_into_neo4j(
             for c in CONSTRAINTS:
                 sess.run(c)
 
-        print("Loading guilds...");        load_guilds(cur, driver)
-        print("Loading channels...");      load_channels(cur, driver)
-        print("Loading members...");       load_members(cur, driver)
-        print("Loading roles...");         load_roles(cur, driver)
-        print("Linking member roles...");  load_member_roles(cur, driver)
-        print("Loading messages...");      load_messages(cur, driver)
-        print("Loading replies...");       load_replies(cur, driver)
-        print("Loading mentions...");      load_mentions(cur, driver)
-        print("Loading reactions...");     load_reactions(cur, driver)
-        print("Loading attachments...");   load_attachments(cur, driver)
-        print("Loading embeds...");        load_embeds(cur, driver)
+        print("Loading guilds...")
+        load_guilds(cur, driver)
+        print("Loading channels...")
+        load_channels(cur, driver)
+        print("Loading members...")
+        load_members(cur, driver)
+        print("Loading roles...")
+        load_roles(cur, driver)
+        print("Linking member roles...")
+        load_member_roles(cur, driver)
+        print("Loading messages...")
+        load_messages(cur, driver)
+        print("Loading replies...")
+        load_replies(cur, driver)
+        print("Loading mentions...")
+        load_mentions(cur, driver)
+        print("Loading reactions...")
+        load_reactions(cur, driver)
+        print("Loading attachments...")
+        load_attachments(cur, driver)
+        print("Loading embeds...")
+        load_embeds(cur, driver)
 
         print("Materializing INTERACTED_WITH edges...")
         materialize_interactions(driver)
