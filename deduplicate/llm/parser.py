@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Mapping
 
 from data_structures.ingestion import normalize_iso_timestamp
 
 from ..models import CanonicalFact, FactRecord, Partition
+
+logger = logging.getLogger(__name__)
 
 
 class CanonicalFactsParser:
@@ -94,6 +97,10 @@ class CanonicalFactsParser:
         value: object,
         source_facts: list[FactRecord],
     ) -> list[str]:
+        allowed = {
+            message_id for fact in source_facts for message_id in fact.evidence
+        }
+
         if value is None:
             evidence = []
         elif isinstance(value, list):
@@ -103,11 +110,19 @@ class CanonicalFactsParser:
         else:
             raise ValueError("evidence must be an array")
 
+        if evidence:
+            filtered = [message_id for message_id in evidence if message_id in allowed]
+            dropped = [message_id for message_id in evidence if message_id not in allowed]
+            if dropped:
+                logger.warning(
+                    "Dropped %d invalid evidence IDs from LLM response.",
+                    len(dropped),
+                )
+            if filtered:
+                return list(dict.fromkeys(filtered))
+
         if not evidence:
-            evidence_set = {
-                message_id for fact in source_facts for message_id in fact.evidence
-            }
-            evidence = sorted(evidence_set)
+            evidence = sorted(allowed)
         return list(dict.fromkeys(evidence))
 
     def _collect_attributes(self, value: object) -> dict[str, object]:
