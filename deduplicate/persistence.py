@@ -104,7 +104,22 @@ class DeduplicationPersistence:
     def _insert_evidence(self, fact_id: int, evidence: Sequence[str]) -> None:
         if not evidence:
             return
-        rows = [(fact_id, message_id) for message_id in dict.fromkeys(evidence)]
+        message_ids = list(dict.fromkeys(evidence))
+        placeholders = ",".join("?" for _ in message_ids)
+        existing_ids = {
+            row[0]
+            for row in self._conn.execute(
+                f"SELECT id FROM message WHERE id IN ({placeholders})",
+                message_ids,
+            )
+        }
+        rows = [(fact_id, message_id) for message_id in message_ids if message_id in existing_ids]
+        dropped = len(message_ids) - len(rows)
+        if dropped:
+            logger.warning(
+                "Dropped %d evidence IDs missing from message table.",
+                dropped,
+            )
         self._conn.executemany(
             "INSERT OR IGNORE INTO fact_evidence (fact_id, message_id) VALUES (?, ?)",
             rows,

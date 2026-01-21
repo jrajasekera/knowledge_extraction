@@ -115,6 +115,11 @@ class FactPartitioner:
             attributes = json.loads(attributes_raw or "{}")
             evidence_raw = row["evidence"]
             evidence = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
+            evidence = [
+                str(message_id)
+                for message_id in evidence
+                if message_id is not None and str(message_id).strip()
+            ]
             object_label = attributes.get("object_label")
             normalized_ts = normalize_iso_timestamp(row["ts"])
             timestamp = normalized_ts or ""
@@ -129,7 +134,7 @@ class FactPartitioner:
                 object_type=row["object_type"],
                 attributes=attributes,
                 confidence=float(row["confidence"]),
-                evidence=[str(msg_id) for msg_id in evidence],
+                evidence=evidence,
                 timestamp=timestamp,
             )
             facts.append(fact)
