@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Annotated, Any
+from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -165,7 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def retrieve_memories(
         request: Request,
         request_body: RetrievalRequest,
-        agent: Annotated[MemoryAgent, Depends(get_agent)],
+        agent: MemoryAgent = Depends(get_agent),
     ) -> RetrievalResponse:
         request_id = uuid4().hex
         client_ip = request.client.host if request.client else None
@@ -202,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         @app.post("/api/memory/retrieve/debug")
         async def retrieve_memories_debug(
             request_body: RetrievalRequest,
-            agent: Annotated[MemoryAgent, Depends(get_agent)],
+            agent: MemoryAgent = Depends(get_agent),
         ) -> dict:
             try:
                 result = await agent.run(request_body, debug_mode=True)
