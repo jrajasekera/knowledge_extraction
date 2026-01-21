@@ -326,14 +326,29 @@ def generate_message_embeddings(
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         ) as pbar:
             for batch in batches:
-                results = _embed_message_batch(
-                    batch,
-                    provider.model_name,
-                    provider.device,
-                    provider.cache_dir,
-                )
-                skipped += len(batch) - len(results)
-                for message, clean_text, embedding in results:
+                texts: list[str] = []
+                valid_messages: list[tuple[GraphMessage, str]] = []
+                for message in batch:
+                    clean_text = format_message_for_embedding_text(
+                        author_name=message.author_name,
+                        content=message.content,
+                        channel_name=message.channel_name,
+                        channel_topic=message.channel_topic,
+                        guild_name=message.guild_name,
+                        mentions=message.mentions,
+                        channel_id=message.channel_id,
+                    )
+                    if clean_text:
+                        texts.append(clean_text)
+                        valid_messages.append((message, clean_text))
+                embeddings = provider.embed(texts) if texts else []
+                results_count = min(len(valid_messages), len(embeddings))
+                skipped += len(batch) - results_count
+                for (message, clean_text), embedding in zip(
+                    valid_messages,
+                    embeddings,
+                    strict=False,
+                ):
                     rows.append(_build_row(message, clean_text, embedding))
                 pbar.update(len(batch))
         return rows, skipped

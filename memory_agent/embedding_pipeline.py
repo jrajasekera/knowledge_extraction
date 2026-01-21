@@ -181,13 +181,19 @@ def generate_embeddings(
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         ) as pbar:
             for batch in batches:
-                results = _embed_fact_batch(
-                    batch,
-                    provider.model_name,
-                    provider.device,
-                    provider.cache_dir,
-                )
-                for fact, text, embedding in results:
+                texts = [
+                    format_fact_for_embedding_text(
+                        person_name=fact.person_name,
+                        fact_type=fact.fact_type,
+                        fact_object=fact.fact_object,
+                        attributes=fact.attributes,
+                        evidence_text=fact.evidence_text,
+                    )
+                    for fact in batch
+                ]
+                embeddings = provider.embed(texts)
+                results_count = min(len(batch), len(embeddings))
+                for fact, text, embedding in zip(batch, texts, embeddings, strict=False):
                     rows.append(
                         {
                             "fact_id": fact.fact_id,
@@ -203,7 +209,7 @@ def generate_embeddings(
                             "embedding": embedding,
                         }
                     )
-                pbar.update(len(results))
+                pbar.update(results_count)
     else:
         # Parallel processing with multiple workers
         logger.info("Processing %d batches with %d workers", len(batches), workers)
