@@ -9,9 +9,9 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, LiteralString
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, ManagedTransaction
 
 from data_structures.ingestion import normalize_iso_timestamp
 from db_utils import get_sqlite_connection
@@ -45,10 +45,10 @@ class MaterializeSummary:
         }
 
 
-def _ensure_person_node(tx, member_id: str, official_name: str | None) -> None:
+def _ensure_person_node(tx: ManagedTransaction, member_id: str, official_name: str | None) -> None:
     if not member_id:
         return
-    params = {"id": member_id}
+    params: dict[str, Any] = {"id": member_id}
     cleaned_name = _sanitize_value(official_name)
     if cleaned_name:
         params["official_name"] = cleaned_name
@@ -100,7 +100,7 @@ def _fetch_facts(
         attributes = json.loads(raw_attributes)
 
         evidence_raw = row[10]
-        evidence = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
+        evidence: list[str] = json.loads(evidence_raw) if isinstance(evidence_raw, str) else []
         normalized_timestamp = normalize_iso_timestamp(row[8]) if row[8] else None
         yield FactRecord(
             id=int(row[0]),
@@ -136,13 +136,15 @@ def _dedupe_evidence(values: Iterable[str]) -> list[str]:
     return [value for value in dict.fromkeys(v for v in values if v)]
 
 
-def _ensure_external_person_node(tx, name: str) -> None:
+def _ensure_external_person_node(tx: ManagedTransaction, name: str) -> None:
     if not name:
         return
     tx.run("MERGE (p:ExternalPerson {name:$name})", {"name": name})
 
 
-def _set_relationship_properties(tx, query: str, params: dict[str, Any]) -> None:
+def _set_relationship_properties(
+    tx: ManagedTransaction, query: LiteralString, params: dict[str, Any]
+) -> None:
     tx.run(query, params)
 
 
@@ -153,7 +155,7 @@ def _mark_fact_synced(conn: sqlite3.Connection, fact_id: int) -> None:
     )
 
 
-def _handle_works_at(tx, fact: FactRecord) -> None:
+def _handle_works_at(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     organization = _sanitize_value(fact.attributes.get("organization"))
@@ -188,7 +190,7 @@ def _handle_works_at(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_lives_in(tx, fact: FactRecord) -> None:
+def _handle_lives_in(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     location = _sanitize_value(fact.attributes.get("location"))
@@ -217,7 +219,7 @@ def _handle_lives_in(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_talks_about(tx, fact: FactRecord) -> None:
+def _handle_talks_about(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     topic = _sanitize_value(fact.attributes.get("topic"))
@@ -246,7 +248,7 @@ def _handle_talks_about(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_close_to(tx, fact: FactRecord) -> None:
+def _handle_close_to(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     other_id = _sanitize_value(fact.object_id)
@@ -313,7 +315,7 @@ def _handle_close_to(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_studied_at(tx, fact: FactRecord) -> None:
+def _handle_studied_at(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     institution = _clean_attr(fact, "institution", fallback=_clean_attr(fact, "object_label"))
@@ -348,7 +350,7 @@ def _handle_studied_at(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_has_skill(tx, fact: FactRecord) -> None:
+def _handle_has_skill(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     skill = _clean_attr(fact, "skill", fallback=_clean_attr(fact, "object_label"))
@@ -381,7 +383,7 @@ def _handle_has_skill(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_working_on(tx, fact: FactRecord) -> None:
+def _handle_working_on(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     project = _clean_attr(fact, "project", fallback=_clean_attr(fact, "object_label"))
@@ -416,7 +418,7 @@ def _handle_working_on(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_related_to(tx, fact: FactRecord) -> None:
+def _handle_related_to(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     relationship_type = _clean_attr(fact, "relationship_type")
@@ -487,7 +489,7 @@ def _handle_related_to(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_attended_event(tx, fact: FactRecord) -> None:
+def _handle_attended_event(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     event_name = _clean_attr(fact, "event_name", fallback=_clean_attr(fact, "object_label"))
@@ -527,7 +529,7 @@ def _handle_attended_event(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_recommends(tx, fact: FactRecord) -> None:
+def _handle_recommends(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     target = _clean_attr(fact, "target", fallback=_clean_attr(fact, "object_label"))
@@ -560,7 +562,7 @@ def _handle_recommends(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_avoids(tx, fact: FactRecord) -> None:
+def _handle_avoids(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     target = _clean_attr(fact, "target", fallback=_clean_attr(fact, "object_label"))
@@ -593,7 +595,7 @@ def _handle_avoids(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_plans_to(tx, fact: FactRecord) -> None:
+def _handle_plans_to(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     plan = _clean_attr(fact, "plan", fallback=_clean_attr(fact, "object_label"))
@@ -626,7 +628,7 @@ def _handle_plans_to(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_previously(tx, fact: FactRecord) -> None:
+def _handle_previously(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     fact_type = _clean_attr(fact, "fact_type")
@@ -662,7 +664,7 @@ def _handle_previously(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_prefers(tx, fact: FactRecord) -> None:
+def _handle_prefers(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     target = _clean_attr(fact, "preference_target", fallback=_clean_attr(fact, "object_label"))
@@ -697,7 +699,7 @@ def _handle_prefers(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_believes(tx, fact: FactRecord) -> None:
+def _handle_believes(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     topic = _clean_attr(fact, "object_label", fallback=_clean_attr(fact, "topic"))
@@ -730,7 +732,7 @@ def _handle_believes(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_dislikes(tx, fact: FactRecord) -> None:
+def _handle_dislikes(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     target = _clean_attr(fact, "target", fallback=_clean_attr(fact, "object_label"))
@@ -763,7 +765,7 @@ def _handle_dislikes(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_enjoys(tx, fact: FactRecord) -> None:
+def _handle_enjoys(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     activity = _clean_attr(fact, "activity", fallback=_clean_attr(fact, "object_label"))
@@ -796,7 +798,7 @@ def _handle_enjoys(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_experienced(tx, fact: FactRecord) -> None:
+def _handle_experienced(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     event_label = _clean_attr(fact, "object_label", fallback=_clean_attr(fact, "event_type"))
@@ -831,7 +833,7 @@ def _handle_experienced(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_cares_about(tx, fact: FactRecord) -> None:
+def _handle_cares_about(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     cause = _clean_attr(fact, "object_label")
@@ -864,7 +866,7 @@ def _handle_cares_about(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_remembers(tx, fact: FactRecord) -> None:
+def _handle_remembers(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     memory_label = _clean_attr(fact, "object_label", fallback=_clean_attr(fact, "memory_type"))
@@ -899,7 +901,7 @@ def _handle_remembers(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_curious_about(tx, fact: FactRecord) -> None:
+def _handle_curious_about(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     topic = _clean_attr(fact, "topic", fallback=_clean_attr(fact, "object_label"))
@@ -932,7 +934,7 @@ def _handle_curious_about(tx, fact: FactRecord) -> None:
     _set_relationship_properties(tx, query, params)
 
 
-def _handle_witnessed(tx, fact: FactRecord) -> None:
+def _handle_witnessed(tx: ManagedTransaction, fact: FactRecord) -> None:
     _ensure_person_node(tx, fact.subject_id, fact.subject_official_name)
 
     occurrence = _clean_attr(fact, "object_label", fallback=_clean_attr(fact, "context"))

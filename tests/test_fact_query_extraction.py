@@ -25,8 +25,6 @@ class TestExtractFactSearchQueries:
                 author_name="Alice",
                 content="Who has experience with Python?",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -69,15 +67,13 @@ class TestExtractFactSearchQueries:
                     }
                 )
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Who has experience with Python?",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -100,15 +96,13 @@ class TestExtractFactSearchQueries:
                 queries_list = [f"query{i}" for i in range(25)]
                 return json.dumps({"queries": queries_list})
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test message",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -126,15 +120,13 @@ class TestExtractFactSearchQueries:
             def complete(self, messages, json_mode: bool = False):
                 raise Exception("LLM error")
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test message",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -152,15 +144,13 @@ class TestExtractFactSearchQueries:
             def complete(self, messages, json_mode: bool = False):
                 return "invalid json {"
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test message",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -178,15 +168,13 @@ class TestExtractFactSearchQueries:
             def complete(self, messages, json_mode: bool = False):
                 return json.dumps({"queries": "not a list"})
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test message",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -212,15 +200,13 @@ class TestExtractFactSearchQueries:
                     }
                 )
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -251,15 +237,13 @@ class TestExtractFactSearchQueries:
                     }
                 )
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -282,15 +266,13 @@ class TestExtractFactSearchQueries:
             def complete(self, messages, json_mode: bool = False):
                 return json.dumps({"queries": [long_query]})
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -320,15 +302,13 @@ class TestExtractFactSearchQueries:
                     }
                 )
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),
@@ -358,15 +338,13 @@ class TestExtractFactSearchQueries:
                     }
                 )
 
-        llm._llama_client = DummyLlama()
+        llm._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
         messages = [
             MessageModel(
                 author_name="Alice",
                 content="Test",
                 author_id="1",
-                channel_id="test",
-                guild_id="test",
                 message_id="1",
                 timestamp=datetime.now(UTC),
             ),

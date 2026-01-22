@@ -27,10 +27,17 @@ class EmbeddingProvider:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            kwargs = {"device": self.device}
             if self.cache_dir is not None:
-                kwargs["cache_folder"] = str(self.cache_dir)
-            self._model = SentenceTransformer(self.model_name, **kwargs)
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    device=self.device,
+                    cache_folder=str(self.cache_dir),
+                )
+            else:
+                self._model = SentenceTransformer(
+                    self.model_name,
+                    device=self.device,
+                )
         return self._model
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:

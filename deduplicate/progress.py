@@ -70,7 +70,8 @@ class DeduplicationProgress:
             (total_partitions,),
         )
         self._conn.commit()
-        return int(cur.lastrowid)
+        # lastrowid is always set after INSERT, but typed as int | None
+        return int(cur.lastrowid or 0)
 
     def get_run_snapshot(self, run_id: int) -> RunSnapshot:
         row = self._conn.execute(

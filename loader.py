@@ -6,15 +6,19 @@
 
 import argparse
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, LiteralString
 
-from neo4j import GraphDatabase
+from neo4j import Driver, GraphDatabase, ManagedTransaction
 
 from db_utils import get_sqlite_connection
 
+# Type alias for SQLite row batches
+RowBatch = list[tuple[Any, ...]]
 
-def batched(cursor: sqlite3.Cursor, fetchsize: int):
+
+def batched(cursor: sqlite3.Cursor, fetchsize: int) -> Iterator[RowBatch]:
     while True:
         rows = cursor.fetchmany(fetchsize)
         if not rows:
@@ -22,17 +26,19 @@ def batched(cursor: sqlite3.Cursor, fetchsize: int):
         yield rows
 
 
-def run_cypher(tx, query: str, params: dict[str, Any] | None = None):
+def run_cypher(
+    tx: ManagedTransaction, query: LiteralString, params: dict[str, Any] | None = None
+) -> None:
     tx.run(query, params or {})
 
 
-CONSTRAINTS = [
+CONSTRAINTS: tuple[LiteralString, ...] = (
     "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (n:Person)   REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT guild_id  IF NOT EXISTS FOR (n:Guild)    REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT channel_id IF NOT EXISTS FOR (n:Channel) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT message_id IF NOT EXISTS FOR (n:Message) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT role_id    IF NOT EXISTS FOR (n:Role)    REQUIRE n.id IS UNIQUE",
-]
+)
 
 MERGE_GUILD = """
 MERGE (g:Guild {id:$id})
@@ -114,24 +120,24 @@ MERGE (m)-[:HAS_EMBED]->(e)
 """
 
 
-def load_guilds(cur, driver):
+def load_guilds(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT id, name, icon_url FROM guild")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for gid, name, icon in rows:
                     run_cypher(tx, MERGE_GUILD, {"id": gid, "name": name, "icon_url": icon})
 
             sess.execute_write(txfun)
 
 
-def load_channels(cur, driver):
+def load_channels(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT id, guild_id, type, category, name, topic FROM channel")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for cid, gid, typ, cat, name, topic in rows:
                     run_cypher(
                         tx,
@@ -149,14 +155,14 @@ def load_channels(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_members(cur, driver):
+def load_members(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute(
         "SELECT id, name, discriminator, nickname, official_name, color_hex, is_bot, avatar_url FROM member"
     )
     with driver.session() as sess:
         for rows in batched(cur, 1000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for pid, name, disc, nick, official_name, color, is_bot, avatar in rows:
                     run_cypher(
                         tx,
@@ -176,12 +182,12 @@ def load_members(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_roles(cur, driver):
+def load_roles(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT id, guild_id, name, color_hex, position FROM role")
     with driver.session() as sess:
         for rows in batched(cur, 1000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for rid, gid, name, color, pos in rows:
                     run_cypher(
                         tx,
@@ -198,26 +204,26 @@ def load_roles(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_member_roles(cur, driver):
+def load_member_roles(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT member_id, role_id FROM member_role")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for mid, rid in rows:
                     run_cypher(tx, MERGE_MEMBER_ROLE, {"member_id": mid, "role_id": rid})
 
             sess.execute_write(txfun)
 
 
-def load_messages(cur, driver):
+def load_messages(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute(
         "SELECT id, channel_id, guild_id, author_id, type, timestamp, timestamp_edited, is_pinned, content FROM message"
     )
     with driver.session() as sess:
         for rows in batched(cur, 1000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for mid, cid, _gid, aid, typ, ts, edited, pinned, content in rows:
                     run_cypher(
                         tx,
@@ -237,37 +243,37 @@ def load_messages(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_replies(cur, driver):
+def load_replies(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT message_id, ref_message_id FROM message_reference")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for mid, ref_mid in rows:
                     run_cypher(tx, MERGE_REPLY, {"msg_id": mid, "ref_msg_id": ref_mid})
 
             sess.execute_write(txfun)
 
 
-def load_mentions(cur, driver):
+def load_mentions(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT message_id, member_id FROM message_mention")
     with driver.session() as sess:
         for rows in batched(cur, 5000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for mid, pid in rows:
                     run_cypher(tx, MERGE_MENTION, {"msg_id": mid, "person_id": pid})
 
             sess.execute_write(txfun)
 
 
-def load_reactions(cur, driver):
+def load_reactions(cur: sqlite3.Cursor, driver: Driver) -> None:
     # ensure emojis first (distinct by id+name pairs)
     cur.execute("SELECT DISTINCT emoji_id, emoji_name FROM reaction")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for eid, ename in rows:
                     run_cypher(
                         tx,
@@ -287,7 +293,7 @@ def load_reactions(cur, driver):
     with driver.session() as sess:
         for rows in batched(cur, 5000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for mid, eid, ename, count in rows:
                     run_cypher(
                         tx,
@@ -298,12 +304,12 @@ def load_reactions(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_attachments(cur, driver):
+def load_attachments(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute("SELECT id, message_id, url, file_name, file_size_bytes FROM attachment")
     with driver.session() as sess:
         for rows in batched(cur, 2000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for att_id, mid, url, fname, size in rows:
                     run_cypher(
                         tx,
@@ -320,14 +326,14 @@ def load_attachments(cur, driver):
             sess.execute_write(txfun)
 
 
-def load_embeds(cur, driver):
+def load_embeds(cur: sqlite3.Cursor, driver: Driver) -> None:
     cur.execute(
         "SELECT id, message_id, title, url, timestamp, description, color_hex, author_name, author_url, thumbnail_url, thumbnail_w, thumbnail_h, video_url, video_w, video_h FROM embed"
     )
     with driver.session() as sess:
         for rows in batched(cur, 2000):
 
-            def txfun(tx, rows=rows):
+            def txfun(tx: ManagedTransaction, rows: RowBatch = rows) -> None:
                 for (
                     eid,
                     mid,
@@ -370,7 +376,7 @@ def load_embeds(cur, driver):
             sess.execute_write(txfun)
 
 
-def materialize_interactions(driver):
+def materialize_interactions(driver: Driver) -> None:
     # Replies weight 3; Mentions weight 1; then symmetrize.
     delete_stmt = "MATCH ()-[r:INTERACTED_WITH]-() DELETE r"
     build_stmt = """

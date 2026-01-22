@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -44,7 +45,7 @@ class FactOccurrence:
 
     properties: dict[str, Any]
     best_score: float
-    evidence: list[str | dict[str, Any]] = field(default_factory=list)
+    evidence: Sequence[str | dict[str, Any]] = field(default_factory=list)
     query_scores: dict[int, float] = field(default_factory=dict)
     query_ranks: dict[int, int] = field(default_factory=dict)
 
@@ -54,7 +55,7 @@ class FactOccurrence:
         score: float,
         rank: int,
         properties: dict[str, Any],
-        evidence: list[str | dict[str, Any]],
+        evidence: Sequence[str | dict[str, Any]],
     ) -> None:
         """Record an observation for this fact from a specific query.
 
@@ -78,7 +79,7 @@ class FactOccurrence:
         if score > self.best_score:
             self.best_score = score
             self.properties = properties
-            self.evidence = evidence
+            self.evidence = list(evidence)
 
 
 class SemanticSearchInput(BaseModel):
@@ -177,7 +178,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
         self,
         properties: dict[str, Any],
         score: float,
-        evidence: list[str | dict[str, Any]],
+        evidence: Sequence[str | dict[str, Any]],
         *,
         query_scores: dict[int, float] | None = None,
     ) -> SemanticSearchResult:
@@ -215,7 +216,7 @@ class SemanticSearchFactsTool(ToolBase[SemanticSearchInput, SemanticSearchOutput
             attributes=attributes,
             similarity_score=score,
             confidence=properties.get("confidence"),
-            evidence=evidence,
+            evidence=list(evidence),
             query_scores=query_scores,
             appeared_in_query_count=appeared_in_query_count,
         )

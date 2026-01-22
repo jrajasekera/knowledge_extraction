@@ -60,14 +60,11 @@ def main() -> None:
         cache_dir=settings.embeddings.cache_dir,
     )
 
-    driver_kwargs = {"max_connection_lifetime": settings.neo4j.max_connection_lifetime}
-    if settings.neo4j.encrypted:
-        driver_kwargs["encrypted"] = True
-
     driver = GraphDatabase.driver(
         settings.neo4j.uri,
         auth=(settings.neo4j.user, settings.neo4j.password),
-        **driver_kwargs,
+        max_connection_lifetime=settings.neo4j.max_connection_lifetime,
+        encrypted=settings.neo4j.encrypted,
     )
     try:
         summary = run_embedding_pipeline(

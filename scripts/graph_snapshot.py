@@ -7,8 +7,9 @@ import argparse
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import Any, LiteralString, cast
 
-from neo4j import GraphDatabase
+from neo4j import GraphDatabase, Session
 
 DEFAULT_NODE_LABELS: tuple[str, ...] = (
     "Person",
@@ -115,7 +116,7 @@ def _format_table(items: Iterable[Mapping[str, object]]) -> str:
     return "\n".join([header_line, separator, *data_lines])
 
 
-def fetch_existing_labels(session) -> set[str]:
+def fetch_existing_labels(session: Session) -> set[str]:
     # Neo4j 4.x uses CALL db.labels(), 5.x supports SHOW NODE LABELS.
     try:
         result = session.run("SHOW NODE LABELS YIELD name")
@@ -125,7 +126,7 @@ def fetch_existing_labels(session) -> set[str]:
         return {record.get("label") for record in result if record.get("label")}
 
 
-def fetch_existing_relationship_types(session) -> set[str]:
+def fetch_existing_relationship_types(session: Session) -> set[str]:
     try:
         result = session.run("SHOW RELATIONSHIP TYPES YIELD name")
         return {record["name"] for record in result if record.get("name")}
@@ -136,18 +137,21 @@ def fetch_existing_relationship_types(session) -> set[str]:
         }
 
 
-def node_counts(session, labels: Sequence[str]) -> Mapping[str, int]:
+def node_counts(session: Session, labels: Sequence[str]) -> dict[str, int]:
     existing = fetch_existing_labels(session)
     counts: dict[str, int] = {}
     for label in labels:
         if label not in existing:
             continue
-        result = session.run(f"MATCH (n:{label}) RETURN count(n) AS count")
-        counts[label] = result.single().get("count", 0)
+        # Label is validated against existing labels, cast is safe
+        query = cast(LiteralString, f"MATCH (n:{label}) RETURN count(n) AS count")
+        result = session.run(query)
+        record = result.single()
+        counts[label] = record.get("count", 0) if record else 0
     return counts
 
 
-def relationship_counts(session, *, limit: int = 25) -> list[Mapping[str, object]]:
+def relationship_counts(session: Session, *, limit: int = 25) -> list[Mapping[str, object]]:
     result = session.run(
         "MATCH ()-[r]->() "
         "RETURN type(r) AS type, count(r) AS count "
@@ -158,13 +162,14 @@ def relationship_counts(session, *, limit: int = 25) -> list[Mapping[str, object
 
 
 def sample_relationships(
-    session, *, per_type_limit: int, available_types: set[str]
-) -> Mapping[str, list[Mapping[str, object]]]:
-    samples: dict[str, list[Mapping[str, object]]] = {}
+    session: Session, *, per_type_limit: int, available_types: set[str]
+) -> dict[str, list[dict[str, Any]]]:
+    samples: dict[str, list[dict[str, Any]]] = {}
     for rel_type, query in SAMPLE_QUERIES.items():
         if rel_type not in available_types:
             continue
-        result = session.run(query, limit=per_type_limit)
+        # Queries from SAMPLE_QUERIES are constants, cast is safe
+        result = session.run(cast(LiteralString, query), limit=per_type_limit)
         rows = [record.data() for record in result]
         if rows:
             samples[rel_type] = rows
@@ -172,8 +177,8 @@ def sample_relationships(
 
 
 def facts_temporal_breakdown(
-    session,
-) -> tuple[list[Mapping[str, object]], list[Mapping[str, object]]]:
+    session: Session,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     month_result = session.run(
         """
         MATCH ()-[r]->()
@@ -201,9 +206,13 @@ def facts_temporal_breakdown(
 
 
 def _detect_spikes(
-    rows: Sequence[Mapping[str, object]], value_key: str
-) -> tuple[list[Mapping[str, object]], float, float, float]:
-    values = [float(row.get(value_key, 0) or 0) for row in rows]
+    rows: Sequence[dict[str, Any]], value_key: str
+) -> tuple[list[dict[str, Any]], float, float, float]:
+    def get_numeric_value(row: dict[str, Any]) -> float:
+        val = row.get(value_key, 0)
+        return float(val) if val is not None else 0.0
+
+    values = [get_numeric_value(row) for row in rows]
     if not values:
         return [], 0.0, 0.0, 0.0
     if len(values) == 1:
@@ -212,14 +221,14 @@ def _detect_spikes(
     avg = statistics.mean(values)
     std = statistics.pstdev(values)
     threshold = avg + max(std, 0.5 * avg)
-    spikes = [row for row in rows if float(row.get(value_key, 0) or 0) >= threshold]
+    spikes = [row for row in rows if get_numeric_value(row) >= threshold]
     if not spikes:
-        spikes = sorted(rows, key=lambda row: float(row.get(value_key, 0) or 0))[-3:]
+        spikes = sorted(rows, key=get_numeric_value)[-3:]
     return spikes, avg, std, threshold
 
 
 def weekly_message_series(
-    session,
+    session: Session,
     *,
     member_limit: int,
 ) -> list[WeeklyMessageSeries]:
@@ -293,7 +302,7 @@ def run_snapshot(
             month_rows, quarter_rows = facts_temporal_breakdown(session)
 
             if month_rows:
-                month_table = [
+                month_table: list[dict[str, Any]] = [
                     {
                         "month": str(row["month"]),
                         "fact_count": row["fact_count"],
@@ -311,7 +320,7 @@ def run_snapshot(
                 print("  (no timestamped facts)")
 
             if quarter_rows:
-                quarter_table = [
+                quarter_table: list[dict[str, Any]] = [
                     {
                         "quarter": f"Q{row['quarter']} {row['year']}",
                         "fact_count": row["fact_count"],
@@ -331,7 +340,7 @@ def run_snapshot(
             if not message_series:
                 print("  (no messages)")
             else:
-                summary_rows = []
+                summary_rows: list[dict[str, Any]] = []
                 member_week_counts: dict[str, dict[str, int]] = {}
                 for series in message_series:
                     week_count = len(series.weekly_counts)
@@ -354,7 +363,7 @@ def run_snapshot(
                 print("\n-- Summary --")
                 print(_format_table(summary_rows))
 
-                members = [row["member"] for row in summary_rows]
+                members: list[str] = [str(row["member"]) for row in summary_rows]
                 all_weeks = sorted(
                     {week for counts in member_week_counts.values() for week in counts},
                     key=lambda label: (
@@ -363,9 +372,9 @@ def run_snapshot(
                     ),
                 )
 
-                weekly_table = []
+                weekly_table: list[dict[str, Any]] = []
                 for week in all_weeks:
-                    row = {"week": week}
+                    row: dict[str, Any] = {"week": week}
                     for member in members:
                         row[member] = member_week_counts.get(member, {}).get(week, 0)
                     weekly_table.append(row)

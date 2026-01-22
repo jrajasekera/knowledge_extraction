@@ -916,7 +916,7 @@ class LLMClient:
                 confidence="medium",
             )
 
-        goal_text = self._goal_text(state, state.get("current_goal", ""))
+        goal_text = self._goal_text(state, state.get("current_goal") or "")
         conversation_text = " ".join(msg.content for msg in state.get("conversation", []))
 
         if "semantic_search_facts" in available_tools:

@@ -39,7 +39,7 @@ def mock_session():
 def test_managed_session_yields_session(mock_context: ToolContext) -> None:
     """managed_session should yield a Neo4j session."""
     mock_session = MagicMock()
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     with managed_session(mock_context) as session:
         assert session is mock_session
@@ -50,7 +50,7 @@ def test_managed_session_yields_session(mock_context: ToolContext) -> None:
 def test_managed_session_closes_on_success(mock_context: ToolContext) -> None:
     """managed_session should close session after successful execution."""
     mock_session = MagicMock()
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     with managed_session(mock_context):
         pass
@@ -61,7 +61,7 @@ def test_managed_session_closes_on_success(mock_context: ToolContext) -> None:
 def test_managed_session_closes_on_exception(mock_context: ToolContext) -> None:
     """managed_session should close session even on exception."""
     mock_session = MagicMock()
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     with pytest.raises(ToolError), managed_session(mock_context):
         raise RuntimeError("Test error")
@@ -72,7 +72,7 @@ def test_managed_session_closes_on_exception(mock_context: ToolContext) -> None:
 def test_managed_session_wraps_exception_in_tool_error(mock_context: ToolContext) -> None:
     """managed_session should wrap exceptions in ToolError."""
     mock_session = MagicMock()
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     with pytest.raises(ToolError) as exc_info, managed_session(mock_context):
         raise ValueError("Original error")
@@ -95,7 +95,7 @@ def test_run_read_query_returns_records(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record1, mock_record2])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     result = run_read_query(mock_context, "MATCH (n) RETURN n")
 
@@ -111,7 +111,7 @@ def test_run_read_query_with_parameters(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_read_query(mock_context, "MATCH (n:Person {id: $id})", {"id": "user-1"})
 
@@ -125,7 +125,7 @@ def test_run_read_query_empty_parameters(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_read_query(mock_context, "MATCH (n) RETURN n")
 
@@ -147,7 +147,7 @@ def test_run_vector_query_basic(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     embedding = [0.1, 0.2, 0.3]
     result = run_vector_query(mock_context, "fact_embeddings", embedding, limit=10)
@@ -166,7 +166,7 @@ def test_run_vector_query_without_evidence(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_vector_query(
         mock_context,
@@ -202,7 +202,7 @@ def test_run_vector_query_with_filters(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record1, mock_record2])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     result = run_vector_query(
         mock_context,
@@ -233,7 +233,7 @@ def test_run_vector_query_filter_list_match(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     result = run_vector_query(
         mock_context,
@@ -257,7 +257,7 @@ def test_run_vector_query_skips_none_nodes(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     result = run_vector_query(
         mock_context,
@@ -283,7 +283,7 @@ def test_run_keyword_query_basic(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([mock_record])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     result = run_keyword_query(mock_context, "python programming", limit=10)
 
@@ -297,7 +297,7 @@ def test_run_keyword_query_sanitizes_input(mock_context: ToolContext) -> None:
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_keyword_query(mock_context, "test!@#$%^&*()query", limit=10)
 
@@ -325,7 +325,7 @@ def test_run_keyword_query_filters_short_terms(mock_context: ToolContext) -> Non
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_keyword_query(mock_context, "a b python", limit=10)
 
@@ -344,7 +344,7 @@ def test_run_keyword_query_removes_duplicates(mock_context: ToolContext) -> None
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_keyword_query(mock_context, "python Python PYTHON", limit=10)
 
@@ -363,7 +363,7 @@ def test_run_keyword_query_applies_fuzzy_matching(mock_context: ToolContext) -> 
     mock_result.__iter__ = lambda self: iter([])
     mock_session.run.return_value = mock_result
 
-    mock_context.driver.session.return_value = mock_session
+    mock_context.driver.session.return_value = mock_session  # type: ignore[union-attr]
 
     run_keyword_query(mock_context, "python", limit=10)
 

@@ -100,7 +100,8 @@ class DeduplicationPersistence:
                 canonical.confidence,
             ),
         )
-        return int(cursor.lastrowid)
+        # lastrowid is always set after INSERT, but typed as int | None
+        return int(cursor.lastrowid or 0)
 
     def _insert_evidence(self, fact_id: int, evidence: Sequence[str]) -> None:
         if not evidence:

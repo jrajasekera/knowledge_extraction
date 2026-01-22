@@ -163,7 +163,9 @@ def _record_window_processed(
     )
 
 
-def reset_ie_progress(sqlite_path: str | sqlite3.Connection, *, clear_cache: bool = False) -> None:
+def reset_ie_progress(
+    sqlite_path: str | sqlite3.Connection | Path, *, clear_cache: bool = False
+) -> None:
     if isinstance(sqlite_path, sqlite3.Connection):
         conn = sqlite_path
         external = True
@@ -209,7 +211,8 @@ def _insert_ie_run(
         "INSERT INTO ie_run (model_name, model_params, window_hint) VALUES (?,?,?)",
         (model_name, params_json, window_desc),
     )
-    return int(cur.lastrowid)
+    # lastrowid is always set after INSERT, but typed as int | None
+    return int(cur.lastrowid or 0)
 
 
 def _normalize_attributes(
@@ -320,7 +323,8 @@ def _upsert_fact(
                 confidence,
             ),
         )
-        fact_id = int(cur.lastrowid)
+        # lastrowid is always set after INSERT, but typed as int | None
+        fact_id = int(cur.lastrowid or 0)
 
     for message_id in evidence:
         conn.execute(
@@ -331,7 +335,7 @@ def _upsert_fact(
 
 
 def run_ie_job(
-    sqlite_path: str | sqlite3.Connection,
+    sqlite_path: str | sqlite3.Connection | Path,
     *,
     config: IEConfig | None = None,
     client_config: LlamaServerConfig | None = None,
@@ -341,9 +345,12 @@ def run_ie_job(
     config = (config or IEConfig()).validate()
     client_config = client_config or LlamaServerConfig()
 
-    external_conn = sqlite_path if isinstance(sqlite_path, sqlite3.Connection) else None
-
-    conn = external_conn or get_sqlite_connection(sqlite_path, timeout=60.0)
+    if isinstance(sqlite_path, sqlite3.Connection):
+        conn = sqlite_path
+        external_conn: sqlite3.Connection | None = sqlite_path
+    else:
+        conn = get_sqlite_connection(sqlite_path, timeout=60.0)
+        external_conn = None
 
     config_hash = compute_config_hash(config)
     cached_focus_ids: set[str] = set()

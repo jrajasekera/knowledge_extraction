@@ -54,7 +54,7 @@ def insert_import_batch(
         "INSERT INTO import_batch (source_path, exported_at_iso, reported_msg_count, loaded_msg_count) VALUES (?,?,?,0)",
         (source_path, exported_at, int(message_count)),
     )
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def finalize_import_batch(conn: sqlite3.Connection, batch_id: int, loaded_count: int):
@@ -183,8 +183,9 @@ def insert_attachment(conn: sqlite3.Connection, msg_id: str, att: dict[str, Any]
 
 
 def insert_embed(conn: sqlite3.Connection, msg_id: str, e: dict[str, Any], idx: int):
+    raw_embed_id = e.get("id")
     embed_id = (
-        int(f"{hash(str(msg_id)) & 0x7FFFFFFF}{idx}") if e.get("id") is None else int(e.get("id"))
+        int(f"{hash(str(msg_id)) & 0x7FFFFFFF}{idx}") if raw_embed_id is None else int(raw_embed_id)
     )
     ensure(
         conn,

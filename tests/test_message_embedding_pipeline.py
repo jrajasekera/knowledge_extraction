@@ -46,7 +46,7 @@ def test_generate_message_embeddings_serializes_payloads():
             _message("Hello **world**"),
             _message("   "),
         ],
-        provider,
+        provider,  # type: ignore[arg-type]
         batch_size=2,
     )
 

@@ -6,7 +6,8 @@ import logging
 from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, LiteralString, cast
 
 from neo4j import Driver, Session
 from tqdm import tqdm
@@ -39,15 +40,14 @@ class GraphFact:
     target_labels: Sequence[str]
 
 
-def _session_kwargs(database: str | None) -> dict[str, str]:
-    return {"database": database} if database else {}
-
-
 def ensure_indices(session: Session, index_name: str = VECTOR_INDEX_NAME) -> None:
     """Create both vector and fulltext indices for hybrid search if absent."""
     # Vector index for semantic search
     logger.info("Ensuring Neo4j vector index %s exists", index_name)
-    session.run(
+    # Neo4j doesn't support parameterized index names, so f-string is required
+    # Cast is needed because LiteralString can't be used with f-strings
+    vector_index_query = cast(
+        LiteralString,
         f"""
         CREATE VECTOR INDEX {index_name} IF NOT EXISTS
         FOR (f:FactEmbedding)
@@ -58,8 +58,9 @@ def ensure_indices(session: Session, index_name: str = VECTOR_INDEX_NAME) -> Non
                 `vector.similarity_function`: 'cosine'
             }}
         }}
-        """
+        """,
     )
+    session.run(vector_index_query)
 
     # Fulltext index for keyword/exact matching
     logger.info("Ensuring Neo4j fulltext index fact_fulltext exists")
@@ -129,7 +130,7 @@ def _embed_fact_batch(
     batch: Sequence[GraphFact],
     model_name: str,
     device: str,
-    cache_dir: str | None,
+    cache_dir: Path | None,
 ) -> list[tuple[GraphFact, str, list[float]]]:
     """Worker function to embed a single batch of facts (runs in subprocess)."""
     # Each worker creates its own provider instance
@@ -334,7 +335,7 @@ def run_embedding_pipeline(
         workers: Number of parallel workers (1 = sequential)
     """
     summary: dict[str, Any] = {}
-    with driver.session(**_session_kwargs(database)) as session:
+    with driver.session(database=database) as session:
         ensure_indices(session)
         facts = fetch_graph_facts(session)
     if not facts:
@@ -342,7 +343,7 @@ def run_embedding_pipeline(
         summary["facts_processed"] = 0
         return summary
     rows = generate_embeddings(facts, provider, batch_size=batch_size, workers=workers)
-    with driver.session(**_session_kwargs(database)) as session:
+    with driver.session(database=database) as session:
         upsert_embeddings(session, rows, embedding_model=provider.model_name)
         if cleanup:
             cleanup_orphan_embeddings(session)
