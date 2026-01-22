@@ -1,0 +1,22 @@
+{
+  "pythonVersion": "3.13",
+  "typeCheckingMode": "basic",
+  "venvPath": ".venv",
+  "include": ["."],
+  "exclude": [
+    "**/.git",
+    "**/.venv",
+    "**/__pycache__",
+    "**/data",
+    "**/exports",
+    "**/htmlcov"
+  ],
+  "reportMissingTypeStubs": "warning",
+  "reportUnknownArgumentType": "warning",
+  "reportUnknownLambdaType": "warning",
+  "reportUnknownMemberType": "warning",
+  "reportUnknownParameterType": "warning",
+  "reportUnknownVariableType": "warning",
+  "reportUntypedClassDecorator": "warning",
+  "reportUntypedFunctionDecorator": "warning"
+}
