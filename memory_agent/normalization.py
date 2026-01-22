@@ -32,6 +32,7 @@ def _build_fact(
     timestamp: str | datetime | None = None,
     similarity_score: float | None = None,
 ) -> RetrievedFact:
+    # Pydantic validators handle dict->FactEvidence and str->datetime conversions
     return RetrievedFact(
         person_id=person_id,
         person_name=person_name or person_id,
@@ -39,8 +40,8 @@ def _build_fact(
         fact_object=fact_object,
         attributes=attributes or {},
         confidence=confidence or 0.0,
-        evidence=_normalize_evidence(evidence),
-        timestamp=timestamp,
+        evidence=_normalize_evidence(evidence),  # type: ignore[arg-type]
+        timestamp=timestamp,  # type: ignore[arg-type]
         similarity_score=similarity_score,
     )
 

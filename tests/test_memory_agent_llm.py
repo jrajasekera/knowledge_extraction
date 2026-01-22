@@ -38,7 +38,7 @@ class DummyTool(ToolBase[DummyInput, DummyOutput]):
 
 def test_tool_catalog_generation_includes_known_tools():
     client = LLMClient(model="GLM-4.5-Air", temperature=0.3)
-    context = ToolContext(driver=DummyDriver())
+    context = ToolContext(driver=DummyDriver())  # type: ignore[arg-type]
     catalog = client._build_tool_catalog(
         {
             "semantic_search_facts": DummyTool(context),
@@ -65,9 +65,9 @@ async def test_aplan_tool_usage_fallback_when_llm_unavailable():
         "tool_calls": [],
         "retrieved_facts": [],
     }
-    tools = {"semantic_search_facts": DummyTool(ToolContext(driver=DummyDriver()))}
+    tools = {"semantic_search_facts": DummyTool(ToolContext(driver=DummyDriver()))}  # type: ignore[arg-type]
 
-    result = await client.aplan_tool_usage("Who knows Go?", tools, state, heuristic_candidate)
+    result = await client.aplan_tool_usage("Who knows Go?", tools, state, heuristic_candidate)  # type: ignore[arg-type]
 
     assert result["tool_name"] == "semantic_search_facts"
     assert result["parameters"] == {"queries": ["test"]}
@@ -82,7 +82,7 @@ async def test_extract_message_search_queries_parses_llm_response():
         def complete(self, messages, json_mode: bool = False):  # pragma: no cover - simple stub
             return '{"queries": ["project roadmap", "release blockers", "deployment timeline"]}'
 
-    client._llama_client = DummyLlama()
+    client._llama_client = DummyLlama()  # type: ignore[reportAttributeAccessIssue]
 
     messages = [
         MessageModel(

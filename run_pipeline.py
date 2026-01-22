@@ -134,7 +134,7 @@ def _create_pipeline_run(conn: sqlite3.Connection) -> int:
         "INSERT INTO pipeline_run (status, current_stage) VALUES ('running', ?)",
         (PIPELINE_STAGES[0],),
     )
-    run_id = int(cur.lastrowid)
+    run_id = int(cur.lastrowid or 0)
     _ensure_stage_rows(conn, run_id)
     conn.commit()
     return run_id

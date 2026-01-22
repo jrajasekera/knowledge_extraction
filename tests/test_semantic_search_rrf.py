@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from memory_agent.tools.semantic_search import (
@@ -16,6 +18,9 @@ from memory_agent.tools.semantic_search import (
     SemanticSearchResult,
 )
 
+# Type alias for evidence to satisfy pyright's list invariance
+Evidence = list[str | dict[str, Any]]
+
 
 class TestFactOccurrence:
     """Tests for FactOccurrence dataclass."""
@@ -23,7 +28,7 @@ class TestFactOccurrence:
     def test_fact_occurrence_initialization(self):
         """Test FactOccurrence can be initialized with required fields."""
         properties = {"person_id": "123", "fact_type": "works_at", "fact_object": "Google"}
-        evidence = [{"content": "I work at Google"}]
+        evidence: Evidence = [{"content": "I work at Google"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
 
         assert occurrence.properties == properties
@@ -35,7 +40,7 @@ class TestFactOccurrence:
     def test_add_observation_updates_scores_and_ranks(self):
         """Test that add_observation correctly tracks scores and ranks."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Initial evidence"}]
+        evidence: Evidence = [{"content": "Initial evidence"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.8, evidence=evidence)
 
         # Add first observation
@@ -81,7 +86,7 @@ class TestFactOccurrence:
     def test_add_observation_keeps_best_rank_per_query(self):
         """Test that multiple observations from same query keep the best (lowest) rank."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Evidence"}]
+        evidence: Evidence = [{"content": "Evidence"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.8, evidence=evidence)
 
         occurrence.add_observation(1, 0.85, 5, properties, evidence)
@@ -96,7 +101,7 @@ class TestFactOccurrence:
     def test_add_observation_updates_best_score_and_properties(self):
         """Test that best_score and properties are updated when a better observation is added."""
         initial_properties = {"person_id": "123", "version": "old"}
-        initial_evidence = [{"content": "Old evidence"}]
+        initial_evidence: Evidence = [{"content": "Old evidence"}]
         occurrence = FactOccurrence(
             properties=initial_properties,
             best_score=0.8,
@@ -105,7 +110,7 @@ class TestFactOccurrence:
 
         # Add observation with higher score
         new_properties = {"person_id": "123", "version": "new"}
-        new_evidence = [{"content": "New evidence"}]
+        new_evidence: Evidence = [{"content": "New evidence"}]
         occurrence.add_observation(1, 0.95, 1, new_properties, new_evidence)
 
         assert occurrence.best_score == 0.95
@@ -114,7 +119,7 @@ class TestFactOccurrence:
 
         # Add observation with lower score
         lower_properties = {"person_id": "123", "version": "lower"}
-        lower_evidence = [{"content": "Lower evidence"}]
+        lower_evidence: Evidence = [{"content": "Lower evidence"}]
         occurrence.add_observation(2, 0.85, 2, lower_properties, lower_evidence)
 
         # Should keep the best properties and evidence
@@ -147,7 +152,7 @@ class TestRRFCalculation:
     def test_rrf_calculation_single_query(self):
         """Test RRF calculation with single query."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 5, properties, evidence)
 
@@ -159,7 +164,7 @@ class TestRRFCalculation:
     def test_rrf_calculation_multiple_queries(self):
         """Test RRF calculation with multiple queries."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 1, properties, evidence)
         occurrence.add_observation(2, 0.85, 3, properties, evidence)
@@ -173,7 +178,7 @@ class TestRRFCalculation:
     def test_score_sum_calculation(self):
         """Test score_sum fusion method."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 1, properties, evidence)
         occurrence.add_observation(2, 0.85, 2, properties, evidence)
@@ -187,7 +192,7 @@ class TestRRFCalculation:
     def test_score_max_calculation_no_boost(self):
         """Test score_max fusion method without boost."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 1, properties, evidence)
         occurrence.add_observation(2, 0.85, 2, properties, evidence)
@@ -200,7 +205,7 @@ class TestRRFCalculation:
     def test_score_max_calculation_with_boost(self):
         """Test score_max fusion method with multi-query boost."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 1, properties, evidence)
         occurrence.add_observation(2, 0.85, 2, properties, evidence)
@@ -215,7 +220,7 @@ class TestRRFCalculation:
     def test_score_max_calculation_different_boosts(self):
         """Test score_max with different boost values."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.8, evidence=evidence)
         occurrence.add_observation(1, 0.8, 1, properties, evidence)
         occurrence.add_observation(2, 0.75, 2, properties, evidence)
@@ -237,7 +242,7 @@ class TestRRFCalculation:
     def test_empty_query_scores_returns_best_score(self):
         """Test that when no query scores exist, best_score is returned."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.85, evidence=evidence)
 
         # Don't add any observations
@@ -253,7 +258,7 @@ class TestRRFCalculation:
     def test_unrecognized_fusion_method_returns_best_score(self):
         """Test that unrecognized fusion method falls back to best_score."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
         occurrence = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)
         occurrence.add_observation(1, 0.9, 1, properties, evidence)
 
@@ -348,7 +353,7 @@ class TestSemanticSearchInput:
 
         # Invalid method
         with pytest.raises(ValueError):
-            SemanticSearchInput(queries=["test"], fusion_method="invalid")
+            SemanticSearchInput(queries=["test"], fusion_method="invalid")  # type: ignore[arg-type]
 
     def test_input_validates_multi_query_boost_range(self):
         """Test that multi_query_boost is validated."""
@@ -409,7 +414,7 @@ class TestBuildResult:
         """Test building a result with basic properties."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "123",
             "person_name": "John Doe",
@@ -417,7 +422,7 @@ class TestBuildResult:
             "fact_object": "Google",
             "confidence": 0.85,
         }
-        evidence = [{"content": "I work at Google"}]
+        evidence: Evidence = [{"content": "I work at Google"}]
 
         result = tool._build_result(properties, 0.95, evidence)
 
@@ -435,14 +440,14 @@ class TestBuildResult:
         """Test building a result with query scores."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "123",
             "person_name": "Jane Smith",
             "fact_type": "has_skill",
             "fact_object": "Python",
         }
-        evidence = [{"content": "I'm proficient in Python"}]
+        evidence: Evidence = [{"content": "I'm proficient in Python"}]
         query_scores = {1: 0.9, 2: 0.85}
 
         result = tool._build_result(properties, 0.92, evidence, query_scores=query_scores)
@@ -454,7 +459,7 @@ class TestBuildResult:
         """Test that JSON string attributes are parsed correctly."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "123",
             "person_name": "John Doe",
@@ -472,7 +477,7 @@ class TestBuildResult:
         """Test that dict attributes are handled correctly."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "123",
             "person_name": "John Doe",
@@ -490,7 +495,7 @@ class TestBuildResult:
         """Test that invalid JSON attributes are handled gracefully."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "123",
             "person_name": "John Doe",
@@ -508,7 +513,7 @@ class TestBuildResult:
         """Test that person_id is used as fallback for person_name."""
         from memory_agent.tools.base import ToolContext
 
-        tool = SemanticSearchFactsTool(ToolContext(driver=None))
+        tool = SemanticSearchFactsTool(ToolContext(driver=None))  # type: ignore[arg-type]
         properties = {
             "person_id": "user_123",
             "fact_type": "works_at",
@@ -544,7 +549,7 @@ class TestMultiQueryFusion:
     def test_rrf_boosts_multi_query_facts(self):
         """Test that RRF gives higher scores to facts in multiple queries."""
         properties = {"person_id": "123"}
-        evidence = [{"content": "Test"}]
+        evidence: Evidence = [{"content": "Test"}]
 
         # Fact appearing in one query at rank 1
         single_query = FactOccurrence(properties=properties, best_score=0.9, evidence=evidence)

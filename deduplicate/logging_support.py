@@ -65,7 +65,7 @@ class ProgressLoggingManager:
             formatter = handler.formatter
             if formatter is not None:
                 wrapped_handler.setFormatter(formatter)
-            self._copy_filters(handler.filters, wrapped_handler)
+            self._copy_filters(handler.filters, wrapped_handler)  # type: ignore[arg-type]
             wrapped.append(wrapped_handler)
         self._original_handlers = original
         self._logger.handlers = wrapped

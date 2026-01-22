@@ -2,6 +2,7 @@
   "pythonVersion": "3.13",
   "typeCheckingMode": "basic",
   "venvPath": ".venv",
+  "stubPath": "typings",
   "include": ["."],
   "exclude": [
     "**/.git",
@@ -9,7 +10,8 @@
     "**/__pycache__",
     "**/data",
     "**/exports",
-    "**/htmlcov"
+    "**/htmlcov",
+    "**/vulture_whitelist.py"
   ],
   "reportMissingTypeStubs": "warning",
   "reportUnknownArgumentType": "warning",

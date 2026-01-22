@@ -14,7 +14,7 @@ def to_serializable(value: Any) -> Any:
     """Convert nested structures into JSON-serializable data."""
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     if isinstance(value, (datetime, date)):
         return value.isoformat()

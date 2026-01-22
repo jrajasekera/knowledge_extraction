@@ -57,7 +57,8 @@ class MinHashLSHDetector:
                 candidate_id = int(candidate_key)
                 if candidate_id == fact_id:
                     continue
-                ordered = tuple(sorted((fact_id, candidate_id)))
+                # Use min/max instead of sorted to get tuple[int, int] type
+                ordered = (min(fact_id, candidate_id), max(fact_id, candidate_id))
                 if ordered in pairs:
                     continue
                 other_signature = signatures.get(candidate_id)

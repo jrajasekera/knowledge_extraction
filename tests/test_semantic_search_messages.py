@@ -23,7 +23,7 @@ class DummyEmbeddingProvider(EmbeddingProvider):
 
 
 def _tool() -> SemanticSearchMessagesTool:
-    context = ToolContext(driver=None, embeddings_model=DummyEmbeddingProvider())
+    context = ToolContext(driver=None, embeddings_model=DummyEmbeddingProvider())  # type: ignore[arg-type]
     return SemanticSearchMessagesTool(context)
 
 

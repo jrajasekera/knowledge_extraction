@@ -8,7 +8,8 @@ from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, LiteralString, cast
 
 from neo4j import Driver, Session
 from tqdm import tqdm
@@ -48,10 +49,6 @@ class GraphMessage:
     attachments: list[dict[str, Any]]
     reactions: list[dict[str, Any]]
     thread_id: str | None
-
-
-def _session_kwargs(database: str | None) -> dict[str, str]:
-    return {"database": database} if database else {}
 
 
 def _stringify_timestamp(value: Any) -> str | None:
@@ -129,7 +126,10 @@ def ensure_indices(session: Session) -> None:
 
     # Vector index for semantic search
     logger.info("Ensuring Neo4j vector index %s exists", VECTOR_INDEX_NAME)
-    session.run(
+    # Neo4j doesn't support parameterized index names, so f-string is required
+    # Cast is needed because LiteralString can't be used with f-strings
+    vector_index_query = cast(
+        LiteralString,
         f"""
         CREATE VECTOR INDEX {VECTOR_INDEX_NAME} IF NOT EXISTS
         FOR (m:MessageEmbedding)
@@ -140,8 +140,9 @@ def ensure_indices(session: Session) -> None:
                 `vector.similarity_function`: 'cosine'
             }}
         }}
-        """
+        """,
     )
+    session.run(vector_index_query)
 
     # Fulltext index for keyword/exact matching
     logger.info("Ensuring Neo4j fulltext index message_fulltext exists")
@@ -233,7 +234,7 @@ def _embed_message_batch(
     batch: Sequence[GraphMessage],
     model_name: str,
     device: str,
-    cache_dir: str | None,
+    cache_dir: Path | None,
 ) -> list[tuple[GraphMessage, str, list[float]]]:
     """Worker function to embed a single batch of messages (runs in subprocess)."""
     # Each worker creates its own provider instance
@@ -487,7 +488,7 @@ def run_message_embedding_pipeline(
         "embeddings_written": 0,
         "cleaned_orphans": 0,
     }
-    with driver.session(**_session_kwargs(database)) as session:
+    with driver.session(database=database) as session:
         ensure_indices(session)
         messages = fetch_graph_messages(session)
     summary["messages_scanned"] = len(messages)
@@ -505,7 +506,7 @@ def run_message_embedding_pipeline(
         logger.info("Dry run enabled; skipping persistence")
         return summary
 
-    with driver.session(**_session_kwargs(database)) as session:
+    with driver.session(database=database) as session:
         upsert_message_embeddings(session, rows, embedding_model=provider.model_name)
         summary["embeddings_written"] = len(rows)
         if cleanup:

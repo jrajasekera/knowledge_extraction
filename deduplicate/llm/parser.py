@@ -138,7 +138,8 @@ class CanonicalFactsParser:
         if value is None:
             return 0.0
         try:
-            confidence = float(value)
+            # Cast to Any since value is validated at runtime
+            confidence = float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
             raise ValueError("confidence must be numeric") from exc
         if not 0.0 <= confidence <= 1.0:

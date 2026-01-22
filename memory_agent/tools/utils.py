@@ -7,7 +7,7 @@ import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, LiteralString, cast
 
 from neo4j import Session
 
@@ -82,7 +82,8 @@ def run_read_query(
 ) -> list[dict[str, Any]]:
     """Execute a read-only Cypher query and return list of dictionaries."""
     with managed_session(context) as session:
-        result = session.run(query, parameters or {})
+        # Cast is needed because queries are dynamically constructed by callers
+        result = session.run(cast(LiteralString, query), parameters or {})
         return [record.data() for record in result]
 
 

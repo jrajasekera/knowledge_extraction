@@ -62,7 +62,7 @@ def test_generate_embeddings_invokes_provider():
         )
     ]
     provider = DummyProvider()
-    rows = generate_embeddings(facts, provider)
+    rows = generate_embeddings(facts, provider)  # type: ignore[arg-type]
 
     assert len(rows) == 1
     assert provider.calls

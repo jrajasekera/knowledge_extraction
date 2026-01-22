@@ -128,11 +128,12 @@ def create_memory_agent_graph(
         logger.info("Analyzing conversation for channel %s", state.get("channel_id"))
 
         # Use LLM to extract goal from conversation (focusing on last message)
+        conversation = state.get("conversation", [])
         if llm and llm.is_available:
-            goal = await llm.extract_goal_from_conversation(state["conversation"])
+            goal = await llm.extract_goal_from_conversation(conversation)
         else:
             # Fallback to simple question detection if LLM unavailable
-            insights = extract_insights(state["conversation"])
+            insights = extract_insights(conversation)
             goal = insights.questions[-1] if insights.questions else "Collect relevant context."
 
         logger.info("Initial goal: %s", goal)
@@ -147,7 +148,8 @@ def create_memory_agent_graph(
     def determine_tool_from_goal(
         state: AgentState, preferred_tool: str | None = None
     ) -> dict[str, Any] | None:
-        conversation_text = " ".join(msg.content for msg in state["conversation"]).lower()
+        conversation = state.get("conversation", [])
+        conversation_text = " ".join(msg.content for msg in conversation).lower()
 
         def build_semantic_search() -> dict[str, Any] | None:
             if conversation_text:
@@ -242,7 +244,7 @@ def create_memory_agent_graph(
         candidate = determine_tool_from_goal(state)
         if llm and llm.is_available:
             try:
-                goal = state.get("current_goal", "")
+                goal = state.get("current_goal") or ""
                 llm_result = await llm.aplan_tool_usage(goal, tools, state, candidate)
                 llm_reasoning_updates.append(
                     {
@@ -508,7 +510,7 @@ def create_memory_agent_graph(
         if llm and llm.is_available:
             try:
                 stop_decision = await llm.should_continue_searching(
-                    state.get("current_goal", ""),
+                    state.get("current_goal") or "",
                     state.get("retrieved_facts", []),
                     calls,
                     state.get("max_iterations", 1),
