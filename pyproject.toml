@@ -74,3 +74,18 @@ omit = [
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
+
+[tool.vulture]
+paths = ["."]
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "data",
+    "dist",
+    "exports",
+    "venv",
+    ".pytest_cache",
+    ".ruff_cache",
+]
