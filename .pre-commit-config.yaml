@@ -11,3 +11,15 @@ repos:
         entry: ruff format
         language: system
         types_or: [python, pyi, jupyter]
+      - id: pyright
+        name: pyright (type check)
+        entry: pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: pytest
+        name: pytest (tests)
+        entry: pytest
+        language: system
+        types: [python]
+        pass_filenames: false
