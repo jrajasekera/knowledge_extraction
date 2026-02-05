@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -66,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.rate_limit.requests, settings.rate_limit.window_seconds
     )
     app.state.request_logger = RequestLogger(settings.sqlite.db_path)
+    app.state.concurrency_semaphore = asyncio.Semaphore(settings.api.max_concurrent_requests)
 
     @app.on_event("startup")
     async def on_startup() -> None:
@@ -165,7 +167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def retrieve_memories(
         request: Request,
         request_body: RetrievalRequest,
-        agent: MemoryAgent = Depends(get_agent),
+        agent: MemoryAgent = Depends(get_agent),  # noqa: B008
     ) -> RetrievalResponse:
         request_id = uuid4().hex
         client_ip = request.client.host if request.client else None
@@ -174,9 +176,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Log request start
         request_logger.log_request_start(request_id, request_body, client_ip)
 
+        semaphore: asyncio.Semaphore = app.state.concurrency_semaphore
         start_time = time.perf_counter()
         try:
-            result = await agent.run(request_body)
+            async with semaphore:
+                result = await agent.run(request_body)
             response = RetrievalResponse.model_validate(result)
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             request_logger.log_request_complete(request_id, response, duration_ms)
@@ -202,10 +206,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         @app.post("/api/memory/retrieve/debug")
         async def retrieve_memories_debug(
             request_body: RetrievalRequest,
-            agent: MemoryAgent = Depends(get_agent),
+            agent: MemoryAgent = Depends(get_agent),  # noqa: B008
         ) -> dict:
+            semaphore: asyncio.Semaphore = app.state.concurrency_semaphore
             try:
-                result = await agent.run(request_body, debug_mode=True)
+                async with semaphore:
+                    result = await agent.run(request_body, debug_mode=True)
                 response = RetrievalResponse.model_validate(result)
                 debug_info = result.get("debug", {})
                 return {

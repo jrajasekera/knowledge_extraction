@@ -91,6 +91,13 @@ class APIConfig:
     enable_cors: bool = False
     cors_origins: tuple[str, ...] = ()
     enable_debug_endpoint: bool = False
+    max_concurrent_requests: int = 2
+
+    def __post_init__(self) -> None:
+        if self.max_concurrent_requests < 1:
+            raise ValueError(
+                f"max_concurrent_requests must be >= 1, got {self.max_concurrent_requests}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +214,7 @@ class Settings:
             enable_cors=cls._bool_env("ENABLE_CORS", False),
             cors_origins=cls._tuple_env("CORS_ALLOW_ORIGINS"),
             enable_debug_endpoint=cls._bool_env("ENABLE_DEBUG_ENDPOINT", False),
+            max_concurrent_requests=int(os.getenv("MAX_CONCURRENT_REQUESTS", "2")),
         )
 
         rate_limit = RateLimitConfig(
