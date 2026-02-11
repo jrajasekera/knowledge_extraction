@@ -16,6 +16,7 @@ from ie.client import LlamaServerClient, LlamaServerConfig
 
 from .fact_formatter import format_fact
 from .models import MessageModel, RetrievedFact
+from .query_fallback import expand_fallback_queries
 from .serialization import json_dumps
 from .state import AgentState
 from .tools import ToolBase
@@ -927,10 +928,21 @@ class LLMClient:
         conversation_text = " ".join(msg.content for msg in state.get("conversation", []))
 
         if "semantic_search_facts" in available_tools:
-            # Use goal text as a single query in fallback mode
-            # Note: This fallback is only used when LLM planning fails entirely
-            # Normal operation will use extract_fact_search_queries for diverse queries
-            queries = [goal_text] if goal_text else [conversation_text]
+            # Try deterministic query expansion before falling back to raw text
+            conversation = state.get("conversation", [])
+            last_msg = conversation[-1].content if conversation else ""
+            recent = [m.content for m in conversation[-5:]] if len(conversation) > 1 else None
+            prev = list(state.get("tried_queries", []))
+            fallback_results = expand_fallback_queries(
+                last_message=last_msg,
+                recent_messages=recent,
+                goal=goal_text or None,
+                previous_queries=prev,
+            )
+            if fallback_results:
+                queries = [fq.text for fq in fallback_results]
+            else:
+                queries = [goal_text] if goal_text else [conversation_text]
             # Over-fetch for LLM quality filtering (3x multiplier, capped at tool maximum)
             retrieval_limit = min(state.get("max_facts", 10) * 3, 50)
             return {

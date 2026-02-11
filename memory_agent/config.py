@@ -83,6 +83,8 @@ class AgentConfig:
     novelty_min_new_facts: int = 1
     novelty_patience: int = 2
     stop_confidence_required: str = "high"
+    fallback_max_queries: int = 12
+    fallback_max_query_length: int = 120
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +215,8 @@ class Settings:
             novelty_min_new_facts=int(os.getenv("NOVELTY_MIN_NEW_FACTS", "1")),
             novelty_patience=int(os.getenv("NOVELTY_PATIENCE", "2")),
             stop_confidence_required=os.getenv("STOP_CONFIDENCE_REQUIRED", "high"),
+            fallback_max_queries=int(os.getenv("FALLBACK_MAX_QUERIES", "12")),
+            fallback_max_query_length=int(os.getenv("FALLBACK_MAX_QUERY_LENGTH", "120")),
         )
 
         # Validate early-stop config
@@ -226,6 +230,10 @@ class Settings:
             raise ValueError(
                 f"STOP_CONFIDENCE_REQUIRED must be low/medium/high, got {agent.stop_confidence_required}"
             )
+        if agent.fallback_max_queries < 1:
+            raise ValueError("FALLBACK_MAX_QUERIES must be >= 1")
+        if agent.fallback_max_query_length < 10:
+            raise ValueError("FALLBACK_MAX_QUERY_LENGTH must be >= 10")
 
         api = APIConfig(
             host=os.getenv("API_HOST", "0.0.0.0"),

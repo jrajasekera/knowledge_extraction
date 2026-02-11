@@ -16,6 +16,7 @@ from .fact_formatter import format_facts
 from .llm import LLMClient
 from .models import RetrievalRequest, RetrievedFact
 from .normalization import normalize_to_facts
+from .query_fallback import expand_fallback_queries
 from .serialization import to_serializable
 from .state import AgentState
 from .tools import ToolBase
@@ -211,9 +212,28 @@ def create_memory_agent_graph(
         conversation = state.get("conversation", [])
         conversation_text = " ".join(msg.content for msg in conversation).lower()
 
+        def _expand_queries() -> list[str]:
+            """Use deterministic fallback expansion on original-case messages."""
+            last_msg = conversation[-1].content if conversation else ""
+            recent = [m.content for m in conversation[-5:]] if len(conversation) > 1 else None
+            goal_text = state.get("current_goal") or ""
+            prev = list(state.get("tried_queries", []))
+            results = expand_fallback_queries(
+                last_message=last_msg,
+                recent_messages=recent,
+                goal=goal_text,
+                previous_queries=prev,
+                max_queries=config.fallback_max_queries,
+                max_query_length=config.fallback_max_query_length,
+            )
+            return [fq.text for fq in results]
+
         def build_semantic_search() -> dict[str, Any] | None:
+            retrieval_limit = state.get("max_facts", config.max_facts)
+            expanded = _expand_queries()
+            if expanded:
+                return {"queries": expanded, "limit": retrieval_limit}
             if conversation_text:
-                retrieval_limit = state.get("max_facts", config.max_facts)
                 return {"queries": [conversation_text[-500:]], "limit": retrieval_limit}
             return None
 
@@ -222,13 +242,16 @@ def create_memory_agent_graph(
         ]
 
         def fallback_payload(tool_name: str) -> dict[str, Any] | None:
+            if tool_name != "semantic_search_facts":
+                return None
+            retrieval_limit = state.get("max_facts", config.max_facts)
+            expanded = _expand_queries()
+            if expanded:
+                return {"queries": expanded, "limit": retrieval_limit}
             goal_text = state.get("current_goal") or conversation_text
             if not goal_text:
                 return None
-            if tool_name == "semantic_search_facts":
-                retrieval_limit = state.get("max_facts", config.max_facts)
-                return {"queries": [goal_text], "limit": retrieval_limit}
-            return None
+            return {"queries": [goal_text], "limit": retrieval_limit}
 
         if preferred_tool:
             for name, builder in heuristics:
@@ -422,8 +445,31 @@ def create_memory_agent_graph(
 
                         # Fallback if no queries were extracted or LLM unavailable
                         if "queries" not in parameters or not parameters.get("queries"):
+                            conversation_msgs = state.get("conversation", [])
+                            last_msg = conversation_msgs[-1].content if conversation_msgs else ""
+                            recent = (
+                                [m.content for m in conversation_msgs[-5:]]
+                                if len(conversation_msgs) > 1
+                                else None
+                            )
                             goal_text = state.get("current_goal") or ""
-                            if goal_text:
+
+                            fallback_results = expand_fallback_queries(
+                                last_message=last_msg,
+                                recent_messages=recent,
+                                goal=goal_text,
+                                previous_queries=previous_queries,
+                                max_queries=config.fallback_max_queries,
+                                max_query_length=config.fallback_max_query_length,
+                            )
+                            if fallback_results:
+                                parameters["queries"] = [fq.text for fq in fallback_results]
+                                logger.info(
+                                    "Fallback query expansion produced %d queries (sources: %s)",
+                                    len(fallback_results),
+                                    ", ".join(sorted({fq.source for fq in fallback_results})),
+                                )
+                            elif goal_text:
                                 parameters["queries"] = [goal_text]
                                 logger.info("Falling back to goal text for fact search")
 
