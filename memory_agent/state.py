@@ -54,3 +54,14 @@ class AgentState(TypedDict, total=False):
     fact_assessments: dict[str, dict[str, Any]]
     entity_extraction_results: dict[str, Any]
     should_stop_evaluation: dict[str, Any]
+
+    # Novelty tracking for early-stop policy
+    new_facts_last_iteration: int
+    novelty_streak_without_gain: int
+    seen_fact_keys: list[list[str | None]]
+
+    # Early-stop config (passed from AgentConfig into state for routing functions)
+    early_stop_min_iterations: int
+    novelty_min_new_facts: int
+    novelty_patience: int
+    stop_confidence_required: str

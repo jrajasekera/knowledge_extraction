@@ -79,6 +79,10 @@ class AgentConfig:
     tool_timeout_seconds: int = 10
     tool_max_retries: int = 1
     reasoning_trace_limit: int = 20
+    early_stop_min_iterations: int = 2
+    novelty_min_new_facts: int = 1
+    novelty_patience: int = 2
+    stop_confidence_required: str = "high"
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,7 +209,23 @@ class Settings:
             tool_timeout_seconds=int(os.getenv("TOOL_TIMEOUT_SECONDS", "10")),
             tool_max_retries=int(os.getenv("TOOL_MAX_RETRIES", "2")),
             reasoning_trace_limit=int(os.getenv("REASONING_TRACE_LIMIT", "20")),
+            early_stop_min_iterations=int(os.getenv("EARLY_STOP_MIN_ITERATIONS", "2")),
+            novelty_min_new_facts=int(os.getenv("NOVELTY_MIN_NEW_FACTS", "1")),
+            novelty_patience=int(os.getenv("NOVELTY_PATIENCE", "2")),
+            stop_confidence_required=os.getenv("STOP_CONFIDENCE_REQUIRED", "high"),
         )
+
+        # Validate early-stop config
+        if agent.early_stop_min_iterations < 0:
+            raise ValueError("EARLY_STOP_MIN_ITERATIONS must be >= 0")
+        if agent.novelty_patience < 1:
+            raise ValueError("NOVELTY_PATIENCE must be >= 1")
+        if agent.novelty_min_new_facts < 0:
+            raise ValueError("NOVELTY_MIN_NEW_FACTS must be >= 0")
+        if agent.stop_confidence_required not in ("low", "medium", "high"):
+            raise ValueError(
+                f"STOP_CONFIDENCE_REQUIRED must be low/medium/high, got {agent.stop_confidence_required}"
+            )
 
         api = APIConfig(
             host=os.getenv("API_HOST", "0.0.0.0"),

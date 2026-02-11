@@ -72,6 +72,10 @@ class RetrievalMetadata(BaseModel):
     processing_time_ms: int
     iterations_used: int
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    # Novelty metrics (early-stop policy)
+    new_facts_last_iteration: int = 0
+    novelty_streak_without_gain: int = 0
+    unique_facts_seen: int = 0
 
 
 class RetrievalResponse(BaseModel):

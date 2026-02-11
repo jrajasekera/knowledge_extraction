@@ -24,6 +24,56 @@ from .tools.base import ToolError
 logger = logging.getLogger(__name__)
 
 
+def fact_key(fact: RetrievedFact) -> tuple[str, str, str | None, str | None]:
+    """Canonical identity of a fact for novelty detection.
+
+    Matches the dedup key used in fact_formatter.deduplicate_facts and
+    SemanticSearchFacts._search_neo4j: (person_id, fact_type, fact_object, relationship_type).
+    """
+    relationship_type = None
+    if isinstance(fact.attributes, dict) and fact.attributes.get("relationship_type"):
+        relationship_type = str(fact.attributes["relationship_type"])
+    return (fact.person_id, fact.fact_type, fact.fact_object, relationship_type)
+
+
+_CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _confidence_meets_threshold(actual: str, required: str) -> bool:
+    """Check if actual confidence level meets or exceeds the required threshold."""
+    return _CONFIDENCE_RANK.get(actual, 0) >= _CONFIDENCE_RANK.get(required, 2)
+
+
+def compute_novelty(
+    new_facts: list[RetrievedFact],
+    seen_fact_keys_serialized: list[list[str | None]],
+    novelty_min_new_facts: int,
+    prev_streak: int,
+) -> tuple[int, int, list[list[str | None]]]:
+    """Compute novelty metrics for a set of new facts.
+
+    Returns (new_count, updated_streak, updated_seen_keys_serialized).
+    Deduplicates both against history AND within the current batch.
+    """
+    seen: set[tuple[str | None, ...]] = {tuple(k) for k in seen_fact_keys_serialized}
+    new_keys: list[list[str | None]] = []
+    new_count = 0
+
+    for f in new_facts:
+        fk = fact_key(f)
+        if fk not in seen:
+            seen.add(fk)
+            new_keys.append(list(fk))
+            new_count += 1
+
+    updated_streak = prev_streak + 1 if new_count < novelty_min_new_facts else 0
+
+    updated_seen = list(seen_fact_keys_serialized)
+    updated_seen.extend(new_keys)
+
+    return new_count, updated_streak, updated_seen
+
+
 class MemoryAgent:
     """Coordinates LangGraph workflow execution."""
 
@@ -73,6 +123,13 @@ class MemoryAgent:
             "should_stop_evaluation": {},
             "tried_queries": [],
             "query_results_map": {},
+            "new_facts_last_iteration": 0,
+            "novelty_streak_without_gain": 0,
+            "seen_fact_keys": [],
+            "early_stop_min_iterations": self.config.early_stop_min_iterations,
+            "novelty_min_new_facts": self.config.novelty_min_new_facts,
+            "novelty_patience": self.config.novelty_patience,
+            "stop_confidence_required": self.config.stop_confidence_required,
         }
         recursion_limit = _estimate_recursion_limit(max_iterations)
         final_state: AgentState = await self.graph.ainvoke(
@@ -88,6 +145,9 @@ class MemoryAgent:
             "processing_time_ms": processing_time_ms,
             "iterations_used": final_state.get("iteration", 0),
             "tool_calls": final_state.get("tool_calls", []),
+            "new_facts_last_iteration": final_state.get("new_facts_last_iteration", 0),
+            "novelty_streak_without_gain": final_state.get("novelty_streak_without_gain", 0),
+            "unique_facts_seen": len(final_state.get("seen_fact_keys", [])),
         }
 
         result: dict[str, Any] = {
@@ -256,17 +316,38 @@ def create_memory_agent_graph(
 
                 if llm_result.get("should_stop"):
                     stop_reason = llm_result.get("stop_reason") or llm_result.get("reasoning")
-                    logger.info("LLM recommended stopping: %s", stop_reason)
-                    return {
-                        "pending_tool": None,
-                        "goal_accomplished": True,
-                        "llm_reasoning": llm_reasoning_updates,
-                        "tool_selection_confidence": llm_result.get("confidence", "low"),
-                        "reasoning_trace": update_reasoning(
-                            state,
-                            f"LLM suggests stopping: {stop_reason}",
-                        ),
-                    }
+                    iteration = state.get("iteration", 0)
+                    min_iterations = state.get("early_stop_min_iterations", 2)
+                    llm_confidence = llm_result.get("confidence", "low")
+                    required_confidence = state.get("stop_confidence_required", "high")
+
+                    if iteration >= min_iterations and _confidence_meets_threshold(
+                        llm_confidence, required_confidence
+                    ):
+                        logger.info(
+                            "LLM recommended stopping: %s (confidence=%s)",
+                            stop_reason,
+                            llm_confidence,
+                        )
+                        return {
+                            "pending_tool": None,
+                            "goal_accomplished": True,
+                            "llm_reasoning": llm_reasoning_updates,
+                            "tool_selection_confidence": llm_confidence,
+                            "reasoning_trace": update_reasoning(
+                                state,
+                                f"LLM suggests stopping: {stop_reason}",
+                            ),
+                        }
+                    else:
+                        logger.info(
+                            "LLM recommended stopping (confidence=%s) at iteration %d "
+                            "but floor=%d / required_confidence=%s not met; continuing",
+                            llm_confidence,
+                            iteration,
+                            min_iterations,
+                            required_confidence,
+                        )
 
                 tool_name = llm_result.get("tool_name")
                 if tool_name and tool_name in tools:
@@ -446,11 +527,17 @@ def create_memory_agent_graph(
             reasoning_msg = (
                 f"Tool {tool_name} failed after {attempts} attempt(s); continuing with fallback."
             )
+            # Tool failure = 0 new facts, increment novelty streak
+            prev_streak = state.get("novelty_streak_without_gain", 0)
+            min_new = state.get("novelty_min_new_facts", 1)
+            failure_streak = prev_streak + 1 if min_new > 0 else 0
             return {
                 "tool_calls": tool_calls,
                 "pending_tool": None,
                 "iteration": state.get("iteration", 0) + 1,
                 "reasoning_trace": update_reasoning(state, reasoning_msg),
+                "new_facts_last_iteration": 0,
+                "novelty_streak_without_gain": failure_streak,
             }
 
         facts = normalize_to_facts(tool_name, result)
@@ -485,6 +572,14 @@ def create_memory_agent_graph(
             # Store best result count for each query
             query_results_map[q] = max(query_results_map.get(q, 0), result_count)
 
+        # Compute novelty using extracted helper
+        new_count, novelty_streak, updated_seen = compute_novelty(
+            new_facts=meaningful_facts,
+            seen_fact_keys_serialized=state.get("seen_fact_keys", []),
+            novelty_min_new_facts=state.get("novelty_min_new_facts", 1),
+            prev_streak=state.get("novelty_streak_without_gain", 0),
+        )
+
         reasoning_msg = (
             f"Tool {tool_name} returned {len(meaningful_facts)} actionable facts."
             if facts
@@ -498,14 +593,30 @@ def create_memory_agent_graph(
             "reasoning_trace": update_reasoning(state, reasoning_msg),
             "tried_queries": tried_queries,
             "query_results_map": query_results_map,
+            "new_facts_last_iteration": new_count,
+            "novelty_streak_without_gain": novelty_streak,
+            "seen_fact_keys": updated_seen,
         }
 
     async def evaluate_progress(state: AgentState) -> AgentState:
         calls = state.get("tool_calls", [])
+        iteration = state.get("iteration", 0)
+        min_iterations = state.get("early_stop_min_iterations", 2)
+        patience = state.get("novelty_patience", 2)
+        streak = state.get("novelty_streak_without_gain", 0)
+        new_facts = state.get("new_facts_last_iteration", 0)
+        required_confidence = state.get("stop_confidence_required", "high")
+
         goal_accomplished = False
-        if calls:
-            last = calls[-1]
-            goal_accomplished = last.get("result_count", 0) > 0
+
+        # Enforce minimum iteration floor: never stop early before this
+        below_floor = iteration < min_iterations
+
+        # Check novelty-based stopping: only if above floor
+        if not below_floor and streak >= patience:
+            goal_accomplished = True
+
+        # Consult LLM for stop decision
         stop_decision: dict[str, Any] = state.get("should_stop_evaluation", {})
         if llm and llm.is_available:
             try:
@@ -514,12 +625,25 @@ def create_memory_agent_graph(
                     state.get("retrieved_facts", []),
                     calls,
                     state.get("max_iterations", 1),
-                    state.get("iteration", 0),
+                    iteration,
+                    new_facts_last_iteration=new_facts,
+                    novelty_streak=streak,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.info("LLM stop evaluation failed: %s", exc)
-        if stop_decision and stop_decision.get("should_continue") is False:
-            goal_accomplished = True
+
+        # LLM stop decision: only honor if above floor AND confidence meets threshold
+        if not below_floor and stop_decision and stop_decision.get("should_continue") is False:
+            llm_confidence = stop_decision.get("confidence", "low")
+            if _confidence_meets_threshold(llm_confidence, required_confidence):
+                goal_accomplished = True
+            else:
+                logger.info(
+                    "LLM advised stopping with confidence %s, but %s required; continuing",
+                    llm_confidence,
+                    required_confidence,
+                )
+
         reasoning_msg = (
             "Goal satisfied with new facts." if goal_accomplished else "Goal not yet satisfied."
         )
@@ -530,9 +654,12 @@ def create_memory_agent_graph(
                 f"LLM advised stopping: {stop_decision.get('reasoning', 'no reasoning provided')}",
             )
         logger.info(
-            "Goal accomplished: %s after tool call %s",
+            "Goal accomplished: %s after tool call %s (iteration=%d, new_facts=%d, streak=%d)",
             goal_accomplished,
             calls[-1] if calls else None,
+            iteration,
+            new_facts,
+            streak,
         )
         return {
             "goal_accomplished": goal_accomplished,
@@ -658,8 +785,15 @@ def should_continue(state: AgentState) -> str:
         return "finish"
     if len(state.get("retrieved_facts", [])) >= state.get("max_facts", 1):
         return "finish"
+    # LLM/metric stop decision: only honor if evaluate_progress agreed (goal_accomplished)
+    # AND we're above the iteration floor
     stop_decision = state.get("should_stop_evaluation", {})
-    if stop_decision and stop_decision.get("should_continue") is False:
+    if (
+        stop_decision
+        and stop_decision.get("should_continue") is False
+        and state.get("goal_accomplished")
+        and state.get("iteration", 0) >= state.get("early_stop_min_iterations", 2)
+    ):
         return "finish"
     if not state.get("pending_tool"):
         return "finish"
@@ -674,8 +808,14 @@ def evaluate_next_step(state: AgentState) -> str:
         return "finish"
     if detect_tool_loop(state.get("tool_calls", [])):
         return "finish"
+    # stop_decision is now correctly gated in evaluate_progress;
+    # only honor here if evaluate_progress also set goal_accomplished
     stop_decision = state.get("should_stop_evaluation", {})
-    if stop_decision and stop_decision.get("should_continue") is False:
+    if (
+        stop_decision
+        and stop_decision.get("should_continue") is False
+        and state.get("goal_accomplished")
+    ):
         return "finish"
     if not state.get("goal_accomplished"):
         return "continue"

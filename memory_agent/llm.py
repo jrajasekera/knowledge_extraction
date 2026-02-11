@@ -592,6 +592,9 @@ class LLMClient:
         tool_calls: list[dict[str, Any]],
         max_iterations: int,
         current_iteration: int,
+        *,
+        new_facts_last_iteration: int = 0,
+        novelty_streak: int = 0,
     ) -> dict[str, Any]:
         if not self.is_available:
             should_continue = current_iteration < max_iterations
@@ -609,20 +612,22 @@ class LLMClient:
             "Determine whether the agent should continue searching for more information or stop.\n\n"
             f"## Goal\n{goal or 'Goal unspecified.'}\n\n"
             f"## Iteration\n{current_iteration}/{max_iterations}\n\n"
+            f"## Novelty Metrics\n"
+            f"- New unique facts last iteration: {new_facts_last_iteration}\n"
+            f"- Consecutive low-novelty iterations: {novelty_streak}\n\n"
             f"## Retrieved Facts ({len(retrieved_facts)} total)\n{facts_summary}\n\n"
             f"## Tool History\n{tool_history}\n\n"
             "## Decision Criteria\n"
             "**Continue searching IFF:**\n"
-            "- Fewer than 5 iterations completed (need more exploration)\n"
-            "- Recent tool calls are still finding new facts\n"
+            "- New unique facts are still being discovered (new_facts_last_iteration > 0)\n"
             "- The goal asks about multiple aspects and we've only covered some\n"
             "- Facts seem incomplete or partial\n"
             "- Different search terms might reveal more relevant information\n\n"
             "**Stop searching if:**\n"
-            "- We've tried 10+ iterations with diminishing returns\n"
-            "- Last 3 tool calls returned 0 results\n"
+            "- Multiple consecutive iterations found no new unique facts (novelty_streak >= 2)\n"
             "- Retrieved facts comprehensively address all aspects of the goal\n"
-            "- We've exhausted different search strategies\n\n"
+            "- We've exhausted different search strategies\n"
+            "- Last 3 tool calls returned 0 results\n\n"
             "## Output Format\n"
             "{\n"
             '  "should_continue": true,\n'
@@ -631,6 +636,8 @@ class LLMClient:
             '  "recommendations": ["suggest next search strategies if continuing"]\n'
             "}\n\n"
             "Be CONSERVATIVE about stopping - err on the side of searching more.\n"
+            "Use the novelty metrics to inform your decision. Report HIGH confidence only when "
+            "you are certain the goal has been comprehensively addressed.\n"
             "Respond with JSON only."
         )
 
