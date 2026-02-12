@@ -59,7 +59,7 @@ def build_context_summary_prompt(
 You are given a conversation and two retrieval blocks (“Facts” and “Messages”). Your task is to write a detailed historical context for the **current conversation**, prioritizing the **last message**, while using relevant material from the retrieval blocks.
 
 ### Objective
-Produce **1–5 paragraphs (≤2000 words)** that add **relevant historical context** to the current conversation.
+Produce **3–7 paragraphs (aim for 500–2500 words)** that add **relevant historical context** to the current conversation. When retrieval blocks contain substantial material, be thorough and develop each point rather than compressing into a brief summary.
 
 ### Inputs
 - **Current Conversation**
@@ -77,31 +77,36 @@ Produce **1–5 paragraphs (≤2000 words)** that add **relevant historical cont
 
 ### Method (follow in order)
 1. **Anchor on the last message:** Identify its topic(s), people, and immediate needs. Start your response with a one-sentence framing that ties directly to the last message.
-2. **Select supporting context:** From **Facts** and **Messages**, extract items that:
+2. **Select supporting context:** From **Facts** and **Messages**, extract all relevant items that:
    - directly relate to the current topic/people/events
-   - fill background gaps
+   - fill background gaps (timelines, roles, affiliations, history)
    - add unique insights not already obvious in the conversation
    - could be useful for understanding or responding to the last message
+   - mention people, projects, or organizations discussed in the conversation
+   When in doubt about relevance, lean toward **including** the item with context.
 3. **Resolve conflicts:**
    - Prefer **Facts** over **Messages**, unless a message adds unique, situational nuance.
    - When sources conflict, favor **more recent** items.
    - Prefer items that align with the current conversation’s focus.
-4. **De-duplicate & compress:** Merge overlapping items. Remove redundant or already-obvious details.
+4. **De-duplicate:** Merge semantically redundant items into richer combined entries. Preserve distinct details, nuances, and supporting evidence — do not compress unique information away.
 5. **Quote precisely:** Use **quotes** or specific references. Attribute them like **(Fact: My example fact)** or **(Msg: My example message)**. Include names/dates if available.
 6. **Note uncertainty:** If key info is missing or inconsistent, state it neutrally (e.g., “It’s unclear whether …”).
 7. **No invention:** Do **not** introduce external facts unless absolutely necessary to clarify a term; if you must, mark it as general knowledge and keep it minimal.
 
-### Inclusion Criteria
-- Items roughly tied to the conversation’s topics, people, or events
-- Background to understand the current exchange
-- Messages that add unique insights not covered by Facts
+### Inclusion Criteria (prefer including over excluding)
+- Items tied to the conversation's topics, people, or events
+- Background, history, and context to understand the current exchange
+- Messages that add unique insights, anecdotes, or specifics not covered by Facts
+- Details about people mentioned: roles, skills, affiliations, past statements
+- Temporal context: timelines, dates, sequences of events
 
-### Exclusion Criteria
-- Off-topic info
-- Repetition of what is already clear from the conversation
+### Exclusion Criteria (apply sparingly)
+- Completely off-topic info with no connection to any person or subject in the conversation
+- Verbatim repetition of something already stated in the conversation
 
 ### Output Requirements
 - **Tone:** neutral, casual
+- **Length:** Aim for 3–7 substantial paragraphs. Each paragraph should develop a distinct theme or person. Expand on facts and messages rather than listing them.
 - **Focus:** people mentioned, related past events, clarifying context—**especially for the last message**
 - **Attribution:** inline references like (Fact: <fact content>)/(Msg: <message content>); include names/dates if available
 - **If nothing relevant exists:** return "No relevant context found."
@@ -152,8 +157,10 @@ async def generate_context_summary(
 
         # Call the LLM using the general text generation method
         system_message = (
-            "You are a helpful assistant that analyzes conversations and provides relevant historical context. "
-            "Generate highly detailed reports focusing only on information relevant to the current discussion."
+            "You are a knowledgeable assistant that writes thorough historical context reports in a neutral, "
+            "casual tone. Your reports are detailed: you expand on each relevant fact and message rather than "
+            "just listing them. Aim for depth and completeness while keeping everything relevant to the "
+            "current discussion."
         )
 
         # Retry up to 2 times if LLM returns empty/blank response
