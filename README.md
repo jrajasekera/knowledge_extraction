@@ -26,7 +26,7 @@
 ---
 
 ## Overview
-This repo ingests exported Discord JSON dumps, stages them losslessly in SQLite, builds an attributed Neo4j graph, runs local LLM information extraction (IE) to capture higher-order signals (work history, education, preferences, relationships, events), and surfaces everything through a retrieval-ready memory service. The `run_pipeline.py` entry point orchestrates ingest → load → IE → fact materialization so you can push new exports end-to-end or resume partially completed runs without reprocessing prior work.
+This repo ingests exported Discord JSON dumps, stages them losslessly in SQLite, builds an attributed Neo4j graph, runs local LLM information extraction (IE) to capture higher-order signals (work history, education, preferences, relationships, events), and surfaces everything through a retrieval-ready memory service. The memory agent combines semantic fact retrieval, message retrieval, and context summarization so downstream chat apps can ask natural-language questions and get grounded, evidence-linked responses from the graph. The `run_pipeline.py` entry point orchestrates ingest → load → IE → fact materialization so you can push new exports end-to-end or resume partially completed runs without reprocessing prior work.
 
 ---
 
