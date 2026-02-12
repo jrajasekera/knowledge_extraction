@@ -827,9 +827,15 @@ def create_memory_agent_graph(
 
 def should_continue(state: AgentState) -> str:
     """Determine if the workflow should continue after planning."""
-    if state.get("iteration", 0) >= state.get("max_iterations", 1):
+    if state.get("iteration", 0) >= state.get("max_iterations", 10):
         return "finish"
-    if len(state.get("retrieved_facts", [])) >= state.get("max_facts", 1):
+    # Only enforce the max_facts hard cap once the iteration floor is met.
+    # Before the floor, let the agent keep iterating so novelty tracking,
+    # LLM stop evaluation, and diverse search strategies get a chance to run.
+    early_stop_floor = state.get("early_stop_min_iterations", 2)
+    if state.get("iteration", 0) >= early_stop_floor and len(
+        state.get("retrieved_facts", [])
+    ) >= state.get("max_facts", 30):
         return "finish"
     # LLM/metric stop decision: only honor if evaluate_progress agreed (goal_accomplished)
     # AND we're above the iteration floor
@@ -838,7 +844,7 @@ def should_continue(state: AgentState) -> str:
         stop_decision
         and stop_decision.get("should_continue") is False
         and state.get("goal_accomplished")
-        and state.get("iteration", 0) >= state.get("early_stop_min_iterations", 2)
+        and state.get("iteration", 0) >= early_stop_floor
     ):
         return "finish"
     if not state.get("pending_tool"):
@@ -848,9 +854,13 @@ def should_continue(state: AgentState) -> str:
 
 def evaluate_next_step(state: AgentState) -> str:
     """Decide whether to continue iterating after a tool execution."""
-    if state.get("iteration", 0) >= state.get("max_iterations", 1):
+    if state.get("iteration", 0) >= state.get("max_iterations", 10):
         return "finish"
-    if len(state.get("retrieved_facts", [])) >= state.get("max_facts", 1):
+    # Only enforce the max_facts hard cap once the iteration floor is met.
+    early_stop_floor = state.get("early_stop_min_iterations", 2)
+    if state.get("iteration", 0) >= early_stop_floor and len(
+        state.get("retrieved_facts", [])
+    ) >= state.get("max_facts", 30):
         return "finish"
     if detect_tool_loop(state.get("tool_calls", [])):
         return "finish"

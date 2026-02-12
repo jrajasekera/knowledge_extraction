@@ -162,6 +162,34 @@ class TestEvaluateNextStep:
         }
         assert evaluate_next_step(state) == "continue"  # type: ignore[arg-type]
 
+    def test_max_facts_below_floor_continues(self) -> None:
+        """max_facts cap should NOT fire when iteration < early_stop_min_iterations."""
+        facts = [_make_fact(f"p{i}") for i in range(30)]
+        state = {
+            "goal_accomplished": False,
+            "iteration": 1,
+            "early_stop_min_iterations": 2,
+            "max_iterations": 10,
+            "retrieved_facts": facts,
+            "max_facts": 30,
+            "tool_calls": [],
+        }
+        assert evaluate_next_step(state) == "continue"  # type: ignore[arg-type]
+
+    def test_max_facts_above_floor_finishes(self) -> None:
+        """max_facts cap should fire once iteration >= early_stop_min_iterations."""
+        facts = [_make_fact(f"p{i}") for i in range(30)]
+        state = {
+            "goal_accomplished": False,
+            "iteration": 2,
+            "early_stop_min_iterations": 2,
+            "max_iterations": 10,
+            "retrieved_facts": facts,
+            "max_facts": 30,
+            "tool_calls": [],
+        }
+        assert evaluate_next_step(state) == "finish"  # type: ignore[arg-type]
+
 
 # ---------------------------------------------------------------------------
 # 11-12. should_continue
@@ -190,6 +218,34 @@ class TestShouldContinue:
             "early_stop_min_iterations": 2,
             "max_iterations": 10,
             "retrieved_facts": [],
+            "max_facts": 30,
+            "pending_tool": {"name": "semantic_search_facts", "input": {}},
+        }
+        assert should_continue(state) == "finish"  # type: ignore[arg-type]
+
+    def test_max_facts_below_floor_continues(self) -> None:
+        """max_facts cap should NOT fire when iteration < early_stop_min_iterations."""
+        facts = [_make_fact(f"p{i}") for i in range(30)]
+        state = {
+            "goal_accomplished": False,
+            "iteration": 1,
+            "early_stop_min_iterations": 2,
+            "max_iterations": 10,
+            "retrieved_facts": facts,
+            "max_facts": 30,
+            "pending_tool": {"name": "semantic_search_facts", "input": {}},
+        }
+        assert should_continue(state) == "continue"  # type: ignore[arg-type]
+
+    def test_max_facts_above_floor_finishes(self) -> None:
+        """max_facts cap should fire once iteration >= early_stop_min_iterations."""
+        facts = [_make_fact(f"p{i}") for i in range(30)]
+        state = {
+            "goal_accomplished": False,
+            "iteration": 2,
+            "early_stop_min_iterations": 2,
+            "max_iterations": 10,
+            "retrieved_facts": facts,
             "max_facts": 30,
             "pending_tool": {"name": "semantic_search_facts", "input": {}},
         }
