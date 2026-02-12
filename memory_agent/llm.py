@@ -43,6 +43,12 @@ TOOL_PROMPT_INFO: dict[str, dict[str, str]] = {
         "inputs": "queries (required, list of 12-20 diverse keywords/phrases of varying lengths)",
         "example": "Use when asked 'Who has startup experience?' - generate diverse queries: ['startup', 'founder', 'entrepreneur', 'early-stage company', 'venture-backed startup experience', 'building companies from scratch', 'startup leadership roles', 'validating scalable business models', 'minimal viable product (MVP) development', 'strategies for sustainable growth and customer acquisition']. Include concise keywords, medium phrases, and fuller descriptive sentences. Try not to search names more than once.",
     },
+    "semantic_search_messages": {
+        "description": "Search raw Discord messages by semantic similarity. Used automatically during final synthesis.",
+        "use_when": "This tool is called automatically during synthesis. Do not select it directly.",
+        "inputs": "queries (required, list of search strings), limit, channel_ids, author_ids",
+        "example": "Automatically invoked with conversation-derived queries during response synthesis.",
+    },
 }
 
 

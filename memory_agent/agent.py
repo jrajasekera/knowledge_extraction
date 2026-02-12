@@ -39,6 +39,11 @@ def fact_key(fact: RetrievedFact) -> tuple[str, str, str | None, str | None]:
 
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
+# Tools eligible for the iterative retrieval loop.
+# semantic_search_messages is excluded because synthesize already handles
+# message retrieval with proper query generation and channel scoping.
+_LOOP_TOOL_NAMES: frozenset[str] = frozenset({"semantic_search_facts"})
+
 
 def _confidence_meets_threshold(actual: str, required: str) -> bool:
     """Check if actual confidence level meets or exceeds the required threshold."""
@@ -255,7 +260,7 @@ def create_memory_agent_graph(
 
         if preferred_tool:
             for name, builder in heuristics:
-                if name == preferred_tool and name in tools:
+                if name == preferred_tool and name in tools and name in _LOOP_TOOL_NAMES:
                     payload = builder()
                     if not payload:
                         payload = fallback_payload(name)
@@ -328,7 +333,8 @@ def create_memory_agent_graph(
         if llm and llm.is_available:
             try:
                 goal = state.get("current_goal") or ""
-                llm_result = await llm.aplan_tool_usage(goal, tools, state, candidate)
+                loop_tools = {k: v for k, v in tools.items() if k in _LOOP_TOOL_NAMES}
+                llm_result = await llm.aplan_tool_usage(goal, loop_tools, state, candidate)
                 llm_reasoning_updates.append(
                     {
                         "iteration": state.get("iteration", 0),
@@ -373,7 +379,7 @@ def create_memory_agent_graph(
                         )
 
                 tool_name = llm_result.get("tool_name")
-                if tool_name and tool_name in tools:
+                if tool_name and tool_name in tools and tool_name in _LOOP_TOOL_NAMES:
                     parameters = llm_result.get("parameters") or {}
                     if not parameters:
                         alternate = determine_tool_from_goal(state, preferred_tool=tool_name)
@@ -482,7 +488,17 @@ def create_memory_agent_graph(
                         ):
                             parameters.pop("similarity_threshold", None)
 
-                    candidate = {"name": tool_name, "input": parameters}
+                    # Validate required fields before dispatch
+                    queries_value = parameters.get("queries")
+                    has_valid_queries = isinstance(queries_value, list) and len(queries_value) > 0
+                    if tool_name.startswith("semantic_search") and not has_valid_queries:
+                        logger.warning(
+                            "Tool %s selected but missing required 'queries'; skipping",
+                            tool_name,
+                        )
+                        candidate = None
+                    else:
+                        candidate = {"name": tool_name, "input": parameters}
                     reasoning_msg = (
                         f"LLM selected {tool_name} (confidence: {llm_result.get('confidence', 'low')}): "
                         f"{llm_result.get('reasoning', '')}"
