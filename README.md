@@ -22,7 +22,6 @@
 - [Roadmap](#roadmap)
 - [Data & Safety](#data--safety)
 - [Quickstart](#quickstart)
-- [License](#license)
 
 ---
 
@@ -48,12 +47,20 @@ loader.py → Neo4j core graph (Person/Message/Channel/Guild/Role + INTERACTED_W
 run_ie.py / pipeline "ie" stage (windowed llama-server IE, fact tables)
         │
         ▼
-facts_to_graph.py (Org/Place/Topic/Event/Skill/etc. nodes + rich relationships)
+facts_to_graph.py (Org/Place/Topic/Skill/Event/etc. nodes + rich relationships)
+        │
+        ├── optional: deduplicate_facts.py (MinHash LSH → embedding similarity → LLM merge)
         │
         ▼
-Neo4j GDS analytics, LangGraph memory agent, embeddings, downstream apps
+cleaner facts in SQLite + Neo4j
+        │
+        ▼
+Neo4j GDS analytics, embeddings, downstream apps
+        │
+        ▼
+memory_agent/                 (LangGraph retrieval + context summarizer → chat agents)
 ```
-`run_pipeline.py` tracks stage status in `pipeline_run`/`pipeline_stage_state` so you can `--resume` or `--restart` long-running IE or fact-materialization jobs. Each stage records structured details (counts, remaining windows) for easy monitoring.
+`run_pipeline.py` tracks stage status in `pipeline_run`/`pipeline_stage_state` so you can `--resume` or `--restart` long-running IE or fact-materialization jobs. It orchestrates `ingest` → `load` → `ie` → `facts`; deduplication is a separate CLI step. Each stage records structured details (counts, remaining windows) for easy monitoring.
 
 ---
 
@@ -69,14 +76,14 @@ The schema lives in `schema.sql`; helper utilities in `data_structures/ingestion
 ### Neo4j (graph + embeddings)
 Node labels:
 - `Person`, `ExternalPerson`, `Guild`, `Channel`, `Message`, `Role`.
-- IE-derived types: `Org`, `Place`, `Topic`, `Project`, `Skill`, `Event`, `Preference`, `Recommendation`.
+- IE-derived types include `Org`, `Institution`, `Place`, `Topic`, `Project`, `Skill`, `Event`, `Resource`, `Goal`, `Preference`, `Activity`, `LifeEvent`, `Cause`, `Memory`, and `Occurrence`.
 - Vector helpers: `FactEmbedding`, `MessageEmbedding` (populated via the scripts under `scripts/`).
 
 Relationships:
 - Core: `SENT`, `IN_CHANNEL`, `IN_GUILD`, `HAS_ROLE`, `MENTIONS`, `REPLIES_TO`, `REACTED_WITH`, `HAS_ATTACHMENT`, `HAS_EMBED`.
 - Derived interactions: `INTERACTED_WITH {weight}` (mentions + replies).
 - Fact edges: `WORKS_AT`, `STUDIED_AT`, `HAS_SKILL`, `WORKING_ON`, `RELATED_TO`, `ATTENDED_EVENT`, `LIVES_IN`, `TALKS_ABOUT`, `CLOSE_TO`, plus preference/plan edges such as `PREFERS`, `DISLIKES`, `ENJOYS`, `RECOMMENDS`, `AVOIDS`, `PLANS_TO`, `CARES_ABOUT`, `CURIOUS_ABOUT`, `BELIEVES`, `REMEMBERS`, `EXPERIENCED`, `WITNESSED`.
-- Vector similarity support via `fact_embeddings` and `message_embeddings` indexes (cosine, 768 dims by default).
+- Vector similarity support via `fact_embeddings` and `message_embeddings` indexes (cosine, 1024 dims by default).
 
 `ingest.cql` defines the GDS projection and constraints for quick graph analytics.
 
@@ -85,28 +92,65 @@ Relationships:
 ## Repository Layout
 ```
 .
-├─ run_pipeline.py            # Orchestrates ingest → load → IE → fact graph with resume support
+├─ run_pipeline.py            # Orchestrates ingest → load → IE → fact graph
 ├─ import_discord_json.py     # Discord JSON → SQLite staging
 ├─ loader.py                  # SQLite → Neo4j core graph + INTERACTED_WITH edges
 ├─ run_ie.py                  # Standalone IE runner (window controls, confidence gating)
 ├─ facts_to_graph.py          # Materialize IE facts into Neo4j
-├─ deduplicate/               # Utils for cleaning duplicated facts prior to graph writes
+├─ deduplicate_facts.py       # CLI for three-stage fact deduplication
+├─ main.py                    # Local sample export stats script
+├─ constants.py               # Shared constants (embedding model, vector dimensions)
+├─ db_utils.py                # SQLite connection helpers with WAL mode support
 ├─ ie/
-│  ├─ advanced_prompts.py     # Prompt scaffolding helpers
+│  ├─ config.py               # 22 FactDefinition schemas
+│  ├─ types.py                # FactType enum + FactAttribute / FactDefinition classes
+│  ├─ models.py               # Pydantic models for IE input/output
+│  ├─ prompts.py              # Prompt template generation
+│  ├─ advanced_prompts.py     # Enhanced prompt scaffolding helpers
 │  ├─ prompt_assets.json      # Few-shot + framing assets editable without touching code
 │  ├─ client.py / runner.py   # llama-server adapter + execution loop
 │  └─ windowing.py            # Channel-ordered streaming windows
-├─ data_structures/ingestion  # Typed domain objects shared by importer/loader/IE
-├─ memory_agent/              # FastAPI service + LangGraph retrieval workflow
+├─ deduplicate/
+│  ├─ core.py                 # Orchestration and merge logic
+│  ├─ partitioning.py         # Partition facts by type for parallel processing
+│  ├─ models.py / persistence.py / progress.py
+│  ├─ similarity/
+│  │  ├─ minhash_lsh.py       # MinHash LSH candidate detection
+│  │  ├─ embeddings.py        # Embedding-based similarity refinement
+│  │  └─ grouping.py          # Grouping algorithms
+│  └─ llm/
+│     ├─ client.py            # LLM merge decision client
+│     └─ prompts.py           # Merge verification prompts
+├─ memory_agent/
+│  ├─ app.py                  # FastAPI application
+│  ├─ agent.py                # LangGraph agentic retrieval workflow
+│  ├─ config.py               # Environment-based configuration
+│  ├─ context_summarizer.py   # Narrative summary generation from facts/messages
+│  ├─ query_fallback.py       # Deterministic fallback query expansion (no LLM)
+│  ├─ request_logger.py       # API request/response audit logging
+│  ├─ models.py / state.py / llm.py / conversation.py
+│  ├─ tools/
+│  │  ├─ base.py              # Base tool class
+│  │  ├─ semantic_search.py   # Semantic search for facts
+│  │  ├─ semantic_search_messages.py
+│  │  └─ utils.py             # Tool utilities
+│  └─ assets/
+│     └─ semantic_message_blacklist.json
+├─ data_structures/ingestion/ # Typed domain objects shared by importer/loader/IE
 ├─ scripts/
 │  ├─ embed_facts.py          # Populate/refresh :FactEmbedding nodes & vector index
 │  ├─ embed_messages.py       # Populate/refresh :MessageEmbedding nodes & index
-│  └─ graph_snapshot.py       # Export Neo4j snapshots for regression checks
-├─ docs/                      # Design notes (llama-server setup, memory agent plans, profiles)
+│  ├─ graph_snapshot.py       # Validate materialized facts & report graph statistics
+│  ├─ enable_wal_mode.py      # Enable SQLite WAL mode for concurrent access
+│  └─ check_wal_status.py     # Check current WAL mode status
+├─ docs/                      # Design notes (memory agent architecture, profile plans)
 ├─ tests/                     # pytest coverage for core modules
-├─ schema.sql, ingest.cql     # SQLite schema + Neo4j constraints/projection
-├─ data/                      # Place large Discord exports here (gitignored)
-├─ discord.db                 # Local staging DB (not checked in)
+├─ schema.sql                 # SQLite schema definition
+├─ ingest.cql                 # Neo4j constraints / GDS projection
+├─ create_fulltext_index.cql  # Neo4j fulltext index for facts
+├─ create_message_fulltext_index.cql
+├─ .env.example               # Template for environment configuration
+├─ pyproject.toml             # Python project & dependency configuration
 └─ README.md
 ```
 
@@ -115,10 +159,15 @@ Relationships:
 ## Environment & Setup
 - **Python 3.13**: `pyenv install 3.13.0 && pyenv local 3.13.0`.
 - **Dependency management**: `uv sync` reads `pyproject.toml` / `uv.lock` and installs into the local virtual env.
-- **Configuration**: 
+- **Configuration**:
   - Copy `.env.example` to `.env` and configure your environment variables.
   - Key variables: `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `LLAMA_BASE_URL`, `LLAMA_API_KEY`, `EMBEDDING_MODEL`, etc.
   - The `.env` file is automatically loaded by the application and is gitignored for security.
+- **WAL mode** (recommended): enable write-ahead logging for concurrent SQLite access:
+  ```bash
+  uv run python scripts/enable_wal_mode.py --db-path ./discord.db
+  ```
+  This is persistent and only needs to be run once per database. Verify with `uv run python scripts/check_wal_status.py`.
 - **Execution**: run everything through `uv run ...` so dependencies resolve consistently.
 
 ---
@@ -129,12 +178,14 @@ One-shot (all stages, resumable):
 uv run python run_pipeline.py \
   --sqlite ./discord.db \
   --schema ./schema.sql \
-  --json-dir ./data \
+  --json-dir ./exports \
   --neo4j-password "$NEO4J_PASSWORD"
 ```
 Key flags:
 - `--json` or `--json-dir`: input exports (files already recorded in `import_batch` are skipped unless `--no-skip-existing`).
 - `--resume` / `--restart`: continue or replace the most recent `pipeline_run` without re-ingesting.
+- `--force-ie`: re-run IE even if results are cached.
+- `--reset-ie-cache`: clear cached IE state before running.
 - `--ie-window-size`, `--ie-max-windows`, `--ie-max-concurrent-requests`: throttle llama-server load for long chats.
 - `--ie-confidence` & `--fact-confidence`: tune minimum thresholds per stage.
 - `--fact-types`: focus fact materialization on a subset (e.g., `WORKS_AT LIVES_IN`).
@@ -147,7 +198,7 @@ Stage progress, details, and timestamps persist in SQLite so partially completed
 ## Stage Entry Points
 ### 1. Import Discord JSON → SQLite
 ```bash
-uv run python import_discord_json.py --db ./discord.db --json-dir ./data
+uv run python import_discord_json.py --db ./discord.db --json-dir ./exports
 ```
 - Recurses through `*.json`, deduplicates via `import_batch`, enforces foreign keys, and captures roles, reactions, embeds, attachments, mentions, and inline emoji.
 - Use `--json` for single files and `--no-skip-existing` to force re-import.
@@ -182,6 +233,26 @@ uv run python facts_to_graph.py \
 ```
 - Handles education, skills, projects, relationships, events, preferences, recommendations, and avoidance facts. Marks processed facts with `graph_synced_at` to keep Neo4j in sync.
 
+### 5. Deduplicate facts
+```bash
+uv run python deduplicate_facts.py \
+  --sqlite ./discord.db \
+  --neo4j-password "$NEO4J_PASSWORD" \
+  --minhash-threshold 0.80 \
+  --embedding-threshold 0.95 \
+  --min-confidence 0.5
+```
+Three-stage pipeline:
+1. **MinHash LSH**: fast candidate detection using character n-grams (default 0.80 Jaccard similarity threshold).
+2. **Embedding similarity**: refines candidates using semantic embeddings (default 0.95 cosine similarity threshold).
+3. **LLM verification**: final merge decision with confidence scoring and attribute reconciliation.
+
+Useful flags:
+- `--resume`: pick up an interrupted deduplication run.
+- `--dry-run`: preview merges without modifying the database or graph.
+
+Deduplication runs are tracked in `deduplication_run` and `deduplication_partition_progress` for auditability and resume support.
+
 ---
 
 ## Information Extraction & Fact Catalogue
@@ -190,17 +261,17 @@ IE runs inside `ie/` combine:
 - **Prompting** (`ie/advanced_prompts.py`, `ie/prompt_assets.json`): reusable scaffolding + JSON assets for few-shots and rubric tweaks without code changes.
 - **Runner** (`ie/runner.py`): concurrency limits, retries, confidence gating, and SQLite persistence.
 
-Current fact coverage (see `ie/types.py` for the canonical list):
+Current fact coverage (see `ie/config.py` for the full list of 22 definitions; enum in `ie/types.py`):
 
 | Category | Fact types | Graph targets |
 | --- | --- | --- |
-| Work & Education | `WORKS_AT`, `STUDIED_AT`, `PREVIOUSLY` | `(:Person)-[:WORKS_AT]->(:Org)` and `(:Person)-[:STUDIED_AT]->(:Org {type:'School'})` with role/location/dates. |
+| Work & Education | `WORKS_AT`, `STUDIED_AT`, `PREVIOUSLY` | `Person` → `Org` / `Institution` / `HistoricalEntity` with role, tenure, and transition context. |
 | Skills & Projects | `HAS_SKILL`, `WORKING_ON` | `Person` → `Skill` / `Project` nodes including proficiency, scope, and timeframe attributes. |
-| Relationships & Memory | `CLOSE_TO`, `RELATED_TO`, `REMEMBERS` | Weighted `Person`↔`Person` edges with relationship basis + evidence arrays. |
+| Relationships & Memory | `CLOSE_TO`, `RELATED_TO`, `REMEMBERS` | Symmetric `Person` relationships plus `Person` → `Memory` edges with supporting evidence. |
 | Topics & Beliefs | `TALKS_ABOUT`, `CARES_ABOUT`, `CURIOUS_ABOUT`, `BELIEVES` | `Person` → `Topic` edges capturing sentiment, rationale, and confidence. |
-| Location & Events | `LIVES_IN`, `ATTENDED_EVENT`, `WITNESSED`, `EXPERIENCED` | `Person` → `Place` / `Event` nodes with normalized timestamps and context. |
+| Location & Events | `LIVES_IN`, `ATTENDED_EVENT`, `WITNESSED`, `EXPERIENCED` | `Person` → `Place` / `Event` / `Occurrence` / `LifeEvent` nodes with normalized timestamps and context. |
 | Preferences & Plans | `PREFERS`, `DISLIKES`, `ENJOYS`, `PLANS_TO` | `Person` → `Preference` nodes describing likes/dislikes and future intent. |
-| Recommendations & Warnings | `RECOMMENDS`, `AVOIDS` | `Person` → `Recommendation` nodes detailing endorsements or cautions with reasons. |
+| Recommendations & Warnings | `RECOMMENDS`, `AVOIDS` | `Person` → `Resource` nodes detailing endorsements or cautions with reasons. |
 
 Each fact stores structured attributes (organization, role, since/until, sentiment basis, etc.), a confidence score, and evidence message IDs. `facts_to_graph.py` sanitizes values, ensures people/org nodes exist, and deduplicates evidence before writing graph relationships.
 
@@ -223,9 +294,16 @@ uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
 Endpoints:
 - `POST /api/memory/retrieve`: main entry point returning stitched fact summaries, supporting metadata, and confidence values.
 - `POST /api/memory/retrieve/debug`: verbose trace when `ENABLE_DEBUG_ENDPOINT=true`.
-- `GET /health`: dependency liveness (Neo4j, embedding indexes, llama-server reachability).
+- `GET /health`: service health summary (Neo4j connectivity + embedding provider readiness).
 
 Environment toggles (see `memory_agent/config.py`): Neo4j credentials/URIs, llama/embedding providers, per-tool limits, timeouts, rate limiting, and optional tracing.
+
+Key capabilities:
+- **Context summarizer** (`context_summarizer.py`): generates narrative summaries (3-7 paragraphs) from retrieved facts and messages, with inline `(Fact:)`/`(Msg:)` attribution and conflict resolution.
+- **Novelty-aware early stopping**: the retrieval loop tracks how many iterations pass without discovering new facts. When the streak exceeds a configurable patience threshold, the agent stops early to avoid wasted LLM calls.
+- **Deterministic fallback query expansion** (`query_fallback.py`): when LLM-based query expansion is unavailable, extracts entities, keywords, and phrases from conversation context to generate diverse search queries without an LLM round-trip.
+- **Concurrency cap** (`MAX_CONCURRENT_REQUESTS`): limits parallel API requests (default 2, configurable via env var).
+- **Request audit logging** (`request_logger.py`): every `/api/memory/retrieve` call is logged to the `memory_agent_request_log` SQLite table with timing, payload, status code, and facts-returned metadata.
 
 The service automatically calls the **semantic fact** and **message** search tools when embeddings are available. See `docs/memory_agent_*` for architectural notes and prompt evolution plans.
 
@@ -234,7 +312,7 @@ The service automatically calls the **semantic fact** and **message** search too
 ## Embedding Jobs
 Populate or refresh vector indexes whenever facts or messages change:
 ```bash
-# Fact embeddings (used by semantic_search_facts tool)
+# Fact embeddings (used by the semantic fact search tool)
 uv run python scripts/embed_facts.py --cleanup
 
 # Message embeddings (search verbatim phrasing alongside structured facts)
@@ -243,9 +321,12 @@ uv run python scripts/embed_messages.py --cleanup
 Both scripts:
 - Sanitize text payloads with channel/person context.
 - Use the configured sentence-transformers model (`EMBEDDING_MODEL` / `MESSAGE_EMBEDDING_MODEL`).
-- Batch requests (`MESSAGE_EMBEDDING_BATCH_SIZE` defaults to 128).
-- Upsert `:FactEmbedding` / `:MessageEmbedding` nodes and rebuild the associated vector index (cosine similarity, 768 dims by default).
-- Accept `--dry-run` to preview work without touching Neo4j.
+- Upsert `:FactEmbedding` / `:MessageEmbedding` nodes and ensure associated vector/fulltext indexes exist (cosine similarity, 1024 dims by default).
+- Support `--cleanup` to remove orphan embeddings.
+
+Script-specific notes:
+- `scripts/embed_facts.py`: default batch size is `64`; supports `--batch-size` and `--workers`.
+- `scripts/embed_messages.py`: default batch size comes from `MESSAGE_EMBEDDING_BATCH_SIZE` (config default `128`); supports `--batch-size`, `--workers`, and `--dry-run`.
 
 Run `scripts/graph_snapshot.py` to capture a Cypher export for regression testing before/after IE changes.
 
@@ -291,6 +372,8 @@ Run `scripts/graph_snapshot.py` to capture a Cypher export for regression testin
 - **Neo4j driver complaining about multiple statements**: loader already separates Cypher statements; check for custom Cypher you injected elsewhere.
 - **Pipeline stalled mid-IE**: rerun `uv run python run_pipeline.py --resume --neo4j-password "$NEO4J_PASSWORD" ...` to pick up remaining windows; see `pipeline_stage_state.details` (JSON) for queue length.
 - **Embeddings out of sync**: rerun `embed_facts.py --cleanup` or `embed_messages.py --cleanup` to rebuild indexes after deleting facts/messages.
+- **Database locked errors**: enable WAL mode with `uv run python scripts/enable_wal_mode.py --db-path ./discord.db` to allow concurrent reads/writes (e.g., memory agent API + deduplication). WAL mode is persistent and only needs to be enabled once. Check status with `uv run python scripts/check_wal_status.py`.
+- **Duplicate facts after multiple IE runs**: run `uv run python deduplicate_facts.py --sqlite ./discord.db --neo4j-password "$NEO4J_PASSWORD"` to merge semantically identical facts. Use `--dry-run` to preview merges first.
 
 ---
 
@@ -308,10 +391,22 @@ Run `scripts/graph_snapshot.py` to capture a Cypher export for regression testin
 - [x] Windowed IE runner (Pydantic validation, resume support, llama-server client)
 - [x] Fact materialization covering education, skills, relationships, events, preferences, and memory cues
 - [x] LangGraph-powered memory agent + semantic search embeddings
+- [x] Fact deduplication (MinHash LSH + embeddings + LLM verification)
+- [x] API request logging & audit trail
+- [x] Context summarizer for narrative retrieval
+- [x] WAL mode for concurrent DB access
+- [x] Code quality tooling (pyright, ruff, pre-commit)
 - [ ] Profile generator: combine facts + graph metrics + evidence into narrative dossiers
 - [ ] Streamlit/Notebooks for people/topic exploration and fact QA
-- [ ] Privacy controls (per-person redaction, “forget me” requests, sensitive topic filters)
+- [ ] Privacy controls (per-person redaction, "forget me" requests, sensitive topic filters)
 - [ ] Automated eval harness for IE prompts + embedding relevance (gold fixtures in `tests/`)
+
+---
+
+## Data & Safety
+- Do not commit raw Discord exports or credentials. Keep large/raw inputs under `data/` or external storage and out of version control.
+- Keep secrets in environment variables (`NEO4J_PASSWORD`, `LLAMA_API_KEY`, etc.) or a local `.env` file (gitignored).
+- Treat generated graph snapshots and logs as potentially sensitive when sharing outside your team.
 
 ---
 
@@ -329,21 +424,32 @@ from run_pipeline import apply_schema
 apply_schema(Path('discord.db'), Path('schema.sql'))
 PY
 
-# 2) Import Discord exports
-uv run python import_discord_json.py --db ./discord.db --json-dir ./data
+# 2) Enable WAL mode for concurrent access
+uv run python scripts/enable_wal_mode.py --db-path ./discord.db
 
-# 3) Start Neo4j locally
+# 3) Import Discord exports
+uv run python import_discord_json.py --db ./discord.db --json-dir ./exports
+
+# 4) Start Neo4j locally
 docker run -p7474:7474 -p7687:7687 -e NEO4J_AUTH=neo4j/test neo4j:5.22
 
-# 4) Load SQLite → Neo4j
+# 5) Load SQLite → Neo4j
 uv run python loader.py --sqlite ./discord.db --neo4j bolt://localhost:7687 --user neo4j --password 'test'
 
-# 5) Run IE + fact materialization (optionally through run_pipeline)
-uv run python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./data --neo4j-password 'test'
+# 6) Run IE
+uv run python run_ie.py --sqlite ./discord.db --window-size 8
 
-# 6) Populate embeddings + start memory agent
+# 7) Materialize facts to Neo4j
+uv run python facts_to_graph.py --sqlite ./discord.db --password 'test'
+
+# 8) Deduplicate facts (optional but recommended)
+uv run python deduplicate_facts.py --sqlite ./discord.db --neo4j-password 'test'
+
+# 9) Populate embeddings + start memory agent
 uv run python scripts/embed_facts.py --cleanup
 uv run python scripts/embed_messages.py --cleanup
 uv run uvicorn memory_agent.app:create_app --host 0.0.0.0 --port 8000
-```
 
+# Alternative: run the full ingest→load→IE→facts pipeline in one command
+uv run python run_pipeline.py --sqlite ./discord.db --schema ./schema.sql --json-dir ./exports --neo4j-password 'test'
+```
